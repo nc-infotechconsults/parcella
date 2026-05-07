@@ -1,0 +1,105 @@
+{
+  "name": "parcella",
+  "version": "1.1.0",
+  "description": "Parcella — Clienti, attività, spese e fiscalità per professionisti",
+  "author": "Parcella",
+  "homepage": "https://parcella.app",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "rebuild": "electron-builder install-app-deps",
+    "postinstall": "npm run rebuild",
+    "dist:mac": "electron-builder --mac",
+    "dist:linux": "electron-builder --linux",
+    "dist:win": "electron-builder --win",
+    "dist:all": "electron-builder --mac --linux --win"
+  },
+  "build": {
+    "appId": "it.parcella.app",
+    "productName": "Parcella",
+    "copyright": "Copyright © 2025",
+    "asar": true,
+    "files": [
+      "Timesheet.html",
+      "*.js",
+      "*.jsx",
+      "*.css",
+      "vendor/**",
+      "build/icon.icns",
+      "build/icon.png",
+      "!node_modules/.cache/**",
+      "!node_modules/electron/**",
+      "!node_modules/electron-builder/**",
+      "!node_modules/@electron/**"
+    ],
+
+    "mac": {
+      "category": "public.app-category.productivity",
+      "icon": "build/icon.icns",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "target": [
+        { "target": "dmg",  "arch": ["x64", "arm64"] },
+        { "target": "zip",  "arch": ["x64", "arm64"] }
+      ]
+    },
+    "dmg": {
+      "title": "Parcella ${version}",
+      "icon": "build/icon.icns",
+      "contents": [
+        { "x": 410, "y": 150, "type": "link", "path": "/Applications" },
+        { "x": 130, "y": 150, "type": "file" }
+      ],
+      "window": { "width": 540, "height": 300 }
+    },
+
+    "win": {
+      "icon": "build/icon.png",
+      "target": [
+        { "target": "nsis",     "arch": ["x64"] },
+        { "target": "portable", "arch": ["x64"] }
+      ],
+      "requestedExecutionLevel": "asInvoker"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "build/icon.png",
+      "uninstallerIcon": "build/icon.png",
+      "installerHeaderIcon": "build/icon.png",
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Parcella"
+    },
+
+    "linux": {
+      "icon": "build/icon.png",
+      "category": "Office",
+      "target": [
+        { "target": "AppImage", "arch": ["x64"] },
+        { "target": "deb",      "arch": ["x64"] }
+
+      ],
+      "maintainer": "Parcella",
+      "description": "Gestione clienti, attività, spese e fiscalità per professionisti",
+      "desktop": {
+        "entry": {
+          "Name": "Parcella",
+          "Comment": "Gestione clienti e timesheet",
+          "Categories": "Office;Finance;"
+        }
+      }
+    }
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^4.0.4",
+    "electron": "^35.0.0",
+    "electron-builder": "^26.8.1"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.9.0",
+    "keytar": "^7.9.0"
+  }
+}

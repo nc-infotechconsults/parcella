@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+out/
+
+# Electron / SQLite data
+*.db
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+
+# Encrypted backups
+*.tsenc
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+
+# Env
+.env
+.env.*
+
+# Claude Code internal
+.claude/
