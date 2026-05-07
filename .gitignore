@@ -32,3 +32,4 @@ Thumbs.db
 
 # Claude Code internal
 .claude/
+/.playwright-mcp/
