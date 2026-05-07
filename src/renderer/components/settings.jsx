@@ -116,7 +116,7 @@ const DataBackupTab = ({ onResetData }) => {
           {hasAPI ? (
             <>
               <button className="btn" onClick={doExport}><Icon name="download" size={14} /> Esporta backup JSON…</button>
-              <button className="btn" onClick={doImport}><Icon name="download" size={14} /> Importa da file JSON…</button>
+              <button className="btn" onClick={doImport}><Icon name="download" size={14} /> Importa da file (JSON / .tsenc)…</button>
             </>
           ) : (
             <div style={{ fontSize: 13, color: "var(--text-muted)" }}>Funzione disponibile solo nella versione desktop (Electron).</div>

@@ -195,4 +195,4 @@ Vai su **Impostazioni → Dati & Backup** per:
 
 ## Licenza
 
-[MIT](LICENSE)
+[MIT](LICENSE.md)

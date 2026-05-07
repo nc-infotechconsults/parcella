@@ -177,7 +177,11 @@ function createWindow() {
 
   ipcMain.handle('backup:chooseImportPath', async () => {
     const result = await dialog.showOpenDialog(win, {
-      filters: [{ name: 'JSON', extensions: ['json'] }],
+      filters: [
+        { name: 'Backup Parcella', extensions: ['json', 'tsenc'] },
+        { name: 'JSON',            extensions: ['json'] },
+        { name: 'Cifrato (.tsenc)', extensions: ['tsenc'] },
+      ],
       properties: ['openFile'],
     });
     return result.canceled ? null : result.filePaths[0];

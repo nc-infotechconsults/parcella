@@ -195,4 +195,4 @@ Go to **Settings → Dati & Backup** to:
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE.md)
