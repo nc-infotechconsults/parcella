@@ -281,7 +281,7 @@ const Settings = ({ user, onSave, onResetData }) => {
               <div className="form-grid" style={{ gridTemplateColumns: "1fr" }}>
                 <div className="field">
                   <label>Partita IVA</label>
-                  <input className="input mono" value={data.piva} onChange={e => update({ piva: e.target.value })} />
+                  <input className="input mono" value={data.piva} onChange={e => update({ piva: normalizePIVA(e.target.value) })} />
                 </div>
                 <div className="field">
                   <label>Codice Fiscale</label>
@@ -411,7 +411,7 @@ const Settings = ({ user, onSave, onResetData }) => {
                   <div>
                     <div style={{ fontWeight: 700, fontSize: 18 }}>{data.firm}</div>
                     <div style={{ fontSize: 11, color: "#57534e", marginTop: 4 }}>{data.address}</div>
-                    <div style={{ fontSize: 11, color: "#57534e" }}>{data.piva} · C.F. {data.cf}</div>
+                    <div style={{ fontSize: 11, color: "#57534e" }}>{fmtPIVA(data.piva)} · C.F. {data.cf}</div>
                     <div style={{ fontSize: 11, color: "#57534e" }}>{data.email}</div>
                   </div>
                   {data.logoDataUrl

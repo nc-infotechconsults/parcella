@@ -54,7 +54,7 @@ const ClientsList = ({ clients, activities, currentMonthKey, onSelect, onAddNew 
                   {c.status === "paused" && <span className="badge badge-warning badge-dot">{t('status.paused')}</span>}
                   {c.status === "active" && <span className="badge badge-success badge-dot">{t('status.active')}</span>}
                 </div>
-                <div className="meta">{c.piva} · {c.commesse.length} commesse · {c.contact}</div>
+                <div className="meta">{fmtPIVA(c.piva)} · {c.commesse.length} commesse{(c.contacts?.[0]?.name || c.contact) ? ` · ${c.contacts?.[0]?.name || c.contact}` : ""}</div>
               </div>
               <div className="col">
                 <div className="label">{t('client.rate')}</div>
@@ -81,12 +81,6 @@ const ClientsList = ({ clients, activities, currentMonthKey, onSelect, onAddNew 
 };
 
 // ── CommessaModal ─────────────────────────────────────────────────────────────
-const COMMESSA_COLORS_CD = [
-  "oklch(0.6 0.13 250)", "oklch(0.65 0.12 180)", "oklch(0.65 0.13 50)",
-  "oklch(0.6 0.13 320)", "oklch(0.7 0.13 100)", "oklch(0.65 0.13 30)",
-  "oklch(0.6 0.12 280)", "oklch(0.7 0.10 220)", "oklch(0.55 0.14 15)",
-];
-
 const CommessaModal = ({ open, client, onClose, onSave }) => {
   const [items, setItems] = useState([]);
 
@@ -98,7 +92,7 @@ const CommessaModal = ({ open, client, onClose, onSave }) => {
   if (!open || !client) return null;
 
   const addItem = () => {
-    const color = COMMESSA_COLORS_CD[items.length % COMMESSA_COLORS_CD.length];
+    const color = COMMESSA_COLORS[items.length % COMMESSA_COLORS.length];
     setItems(prev => [...prev, { code: "", name: "", color, status: "active", startDate: "", notes: "" }]);
   };
 
@@ -107,8 +101,8 @@ const CommessaModal = ({ open, client, onClose, onSave }) => {
   const rmItem = (i) => setItems(prev => prev.filter((_, j) => j !== i));
 
   const cycleColor = (i) => {
-    const idx = COMMESSA_COLORS_CD.indexOf(items[i].color);
-    updItem(i, { color: COMMESSA_COLORS_CD[(idx + 1) % COMMESSA_COLORS_CD.length] });
+    const idx = COMMESSA_COLORS.indexOf(items[i].color);
+    updItem(i, { color: COMMESSA_COLORS[(idx + 1) % COMMESSA_COLORS.length] });
   };
 
   return (
@@ -202,6 +196,8 @@ window.CommessaModal = CommessaModal;
 const ClientDetail = ({ client, activities, currentMonthKey, onEdit, onBack, onDelete, onSaveCommesse }) => {
   const [tab, setTab] = useState("overview");
   const [commessaModalOpen, setCommessaModalOpen] = useState(false);
+  const [mYear, mMonthNum] = currentMonthKey.split("-");
+  const currentMonthLabel = `${MONTHS_IT[+mMonthNum - 1]} ${mYear}`;
   const acts = activities.filter(a => a.clientId === client.id && a.monthKey === currentMonthKey);
   const allActs = [...activities.filter(a => a.clientId === client.id)]
     .sort((a, b) => b.monthKey.localeCompare(a.monthKey) || b.day - a.day);
@@ -221,17 +217,32 @@ const ClientDetail = ({ client, activities, currentMonthKey, onEdit, onBack, onD
             {client.status === "active" && <span className="badge badge-success badge-dot">Attivo</span>}
             {client.status === "paused" && <span className="badge badge-warning badge-dot">In pausa</span>}
           </div>
-          <div className="id">{client.piva} · {client.address}</div>
-          <div className="text-sm text-muted" style={{ marginTop: 4 }}>
-            Referente: <strong style={{ color: "var(--text)" }}>{client.contact}</strong> · {client.email}
-          </div>
+          <div className="id">{fmtPIVA(client.piva)} · {client.address}</div>
+          {(() => {
+            const cts = getClientContacts(client);
+            if (!cts.length) return null;
+            return (
+              <div style={{ marginTop: 4, display: "flex", flexDirection: "column", gap: 2 }}>
+                {cts.map((ct, i) => (
+                  <div key={i} className="text-sm text-muted">
+                    <span style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--text-muted)", marginRight: 6 }}>{ct.role}</span>
+                    <strong style={{ color: "var(--text)" }}>{ct.name}</strong>
+                    {ct.email && <span style={{ marginLeft: 6 }}>· {ct.email}</span>}
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
         </div>
         <div style={{ display: "flex", gap: 8 }}>
-          {client.email && (
-            <a className="btn btn-ghost btn-sm" href={"mailto:" + client.email}>
-              <Icon name="mail" size={14} /> Contatta
-            </a>
-          )}
+          {(() => {
+            const invoiceCt = getClientInvoiceContact(client);
+            return invoiceCt?.email ? (
+              <a className="btn btn-ghost btn-sm" href={"mailto:" + invoiceCt.email}>
+                <Icon name="mail" size={14} /> Contatta
+              </a>
+            ) : null;
+          })()}
           <button className="btn btn-primary btn-sm" onClick={onEdit}>
             <Icon name="edit" size={14} /> {t('action.edit')}
           </button>
@@ -255,7 +266,7 @@ const ClientDetail = ({ client, activities, currentMonthKey, onEdit, onBack, onD
       {tab === "overview" && (
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
           <div className="card">
-            <div className="card-header"><h3>Mese in corso · maggio 2026</h3></div>
+            <div className="card-header"><h3>Mese in corso · {currentMonthLabel}</h3></div>
             <div className="card-body">
               <div className="info-grid" style={{ gridTemplateColumns: "1fr 1fr" }}>
                 <div className="info-cell">

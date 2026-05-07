@@ -1,9 +1,4 @@
 // Main app — state, routing, i18n, SQLite persistence
-const COMMESSA_COLORS = [
-  "oklch(0.6 0.13 250)", "oklch(0.65 0.12 180)", "oklch(0.65 0.13 50)",
-  "oklch(0.6 0.13 320)", "oklch(0.7 0.13 100)", "oklch(0.65 0.13 30)",
-  "oklch(0.6 0.12 280)", "oklch(0.7 0.10 220)", "oklch(0.55 0.14 15)",
-];
 
 // ── Persistence helpers ──────────────────────────────────────────────────────
 async function dbLoadAll() {
@@ -403,7 +398,7 @@ const App = () => {
 const ClientFormWrapper = ({ client, onSave, onCancel }) => {
   const [data, setData] = useState(client || {
     id: "c" + Date.now(),
-    name: "", piva: "", address: "", contact: "", email: "", status: "active",
+    name: "", piva: "", address: "", contacts: [], status: "active",
     hourlyRate: 80, hoursPlafond: 30, cassaPct: 4, cassaIncluded: false,
     vatPct: 22, withholding: false, paymentDays: 30,
     contractStart: new Date().toISOString().slice(0, 10),
@@ -432,6 +427,11 @@ const ClientFormInner = ({ data, setData }) => {
   const update = (patch) => setData(d => ({ ...d, ...patch }));
   const ex = computeInvoiceAmounts(data, 10);
 
+  const contacts = data.contacts || [];
+  const addContact = () => update({ contacts: [...contacts, { name: "", role: "Principale", email: "" }] });
+  const updContact = (i, patch) => update({ contacts: contacts.map((c, j) => j === i ? { ...c, ...patch } : c) });
+  const rmContact = (i) => update({ contacts: contacts.filter((_, j) => j !== i) });
+
   const addCommessa = () => {
     const color = COMMESSA_COLORS[data.commesse.length % COMMESSA_COLORS.length];
     update({ commesse: [...data.commesse, { code: "", name: "", color }] });
@@ -453,7 +453,7 @@ const ClientFormInner = ({ data, setData }) => {
             <div className="field full"><label>{t('cf.firmName')}</label>
               <input className="input" value={data.name} onChange={e => update({ name: e.target.value })} placeholder={t('cf.firmNamePlaceholder')} /></div>
             <div className="field"><label>{t('cf.piva')}</label>
-              <input className="input mono" value={data.piva} onChange={e => update({ piva: e.target.value })} placeholder="IT12345678901" /></div>
+              <input className="input mono" value={data.piva} onChange={e => update({ piva: normalizePIVA(e.target.value) })} placeholder="IT12345678901" /></div>
             <div className="field"><label>{t('cf.status')}</label>
               <select className="select" value={data.status} onChange={e => update({ status: e.target.value })}>
                 <option value="active">{t('status.active')}</option>
@@ -462,11 +462,31 @@ const ClientFormInner = ({ data, setData }) => {
               </select></div>
             <div className="field full"><label>{t('cf.address')}</label>
               <input className="input" value={data.address} onChange={e => update({ address: e.target.value })} /></div>
-            <div className="field"><label>{t('cf.contact')}</label>
-              <input className="input" value={data.contact} onChange={e => update({ contact: e.target.value })} /></div>
-            <div className="field"><label>{t('cf.email')}</label>
-              <input className="input" type="email" value={data.email} onChange={e => update({ email: e.target.value })} /></div>
           </div>
+        </div>
+
+        <div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+            <h3 className="section-title" style={{ margin: 0 }}>Referenti</h3>
+            <button type="button" className="btn btn-sm" onClick={addContact}><Icon name="plus" size={12} /> Aggiungi referente</button>
+          </div>
+          {contacts.length === 0
+            ? <div style={{ fontSize: 12.5, color: "var(--text-muted)", padding: "6px 0" }}>Nessun referente — aggiungine uno.</div>
+            : <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {contacts.map((ct, i) => (
+                  <div key={i} style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                    <input className="input" style={{ flex: 1 }} placeholder="Nome referente" value={ct.name} onChange={e => updContact(i, { name: e.target.value })} />
+                    <select className="select" style={{ width: 150, flexShrink: 0 }} value={ct.role} onChange={e => updContact(i, { role: e.target.value })}>
+                      <option value="Principale">Principale</option>
+                      <option value="Fatturazione">Fatturazione</option>
+                      <option value="Tecnico">Tecnico</option>
+                      <option value="Amministrativo">Amministrativo</option>
+                    </select>
+                    <input className="input" type="email" style={{ flex: 1 }} placeholder="email@esempio.it" value={ct.email} onChange={e => updContact(i, { email: e.target.value })} />
+                    <button type="button" className="btn btn-ghost btn-sm btn-icon" onClick={() => rmContact(i)}><Icon name="trash" size={12} /></button>
+                  </div>
+                ))}
+              </div>}
         </div>
 
         <div>

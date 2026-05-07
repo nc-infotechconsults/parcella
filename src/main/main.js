@@ -127,12 +127,13 @@ function createWindow() {
     },
   });
 
-  win.loadFile('Timesheet.html');
+  win.loadFile(path.join(__dirname, '../renderer/index.html'));
 
   // ── Window controls ──────────────────────────────────────────────
   ipcMain.on('win-close', () => win.close());
   ipcMain.on('win-minimize', () => win.minimize());
   ipcMain.on('win-maximize', () => win.isMaximized() ? win.unmaximize() : win.maximize());
+  ipcMain.on('app:version', (event) => { event.returnValue = app.getVersion(); });
 
   // ── DB operations ────────────────────────────────────────────────
   ipcMain.handle('db:loadAll', () => db.loadAll());
@@ -147,13 +148,11 @@ function createWindow() {
     return true;
   });
 
-  ipcMain.handle('db:getInfo', () => ({
-    dbPath,
-    dbType: AppDB._type || 'unknown',
-    stats: db.stats(),
-    icloud: iCloudPath(),
-    dropbox: dropboxPath(),
-  }));
+  ipcMain.handle('db:getInfo', () => {
+    const icloud = iCloudPath();
+    const dropbox = dropboxPath();
+    return { dbPath, dbType: AppDB._type || 'unknown', stats: db.stats(), icloud, dropbox };
+  });
 
   // ── Export / Import ──────────────────────────────────────────────
   ipcMain.handle('db:exportJSON', () => db.exportJSON());
@@ -191,12 +190,10 @@ function createWindow() {
   });
 
   // ── iCloud ───────────────────────────────────────────────────────
-  ipcMain.handle('backup:checkCloud', () => ({
-    icloud:       { available: !!iCloudPath(),       path: iCloudPath() },
-    dropbox:      { available: !!dropboxPath(),      path: dropboxPath() },
-    googledrive:  { available: !!googleDrivePath(),  path: googleDrivePath() },
-    onedrive:     { available: !!oneDrivePath(),     path: oneDrivePath() },
-  }));
+  ipcMain.handle('backup:checkCloud', () => {
+    const paths = { icloud: iCloudPath(), dropbox: dropboxPath(), googledrive: googleDrivePath(), onedrive: oneDrivePath() };
+    return Object.fromEntries(Object.entries(paths).map(([k, p]) => [k, { available: !!p, path: p }]));
+  });
 
   ipcMain.handle('backup:backupToCloud', async (_, { type, encrypt }) => {
     const baseMap = { icloud: iCloudPath, dropbox: dropboxPath, googledrive: googleDrivePath, onedrive: oneDrivePath };
@@ -271,3 +268,4 @@ app.on('window-all-closed', () => {
 app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) createWindow();
 });
+

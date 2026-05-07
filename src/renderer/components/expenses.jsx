@@ -29,8 +29,6 @@ function computeExpenseFiscals(e) {
   const gross = e.amount;
   const net = e.vatExempt ? gross : gross / (1 + (e.vatPct || 0) / 100);
   const vat = gross - net;
-  const vatDetractable = e.vatExempt || !e.billable === false ? 0 : 0; // simplified
-  // For studio (own) expenses: VAT detractable = vat * deductPct / 100 (simplified, real life depends)
   const vatDetracted = e.billable
     ? vat   // billable: full VAT recovered via fattura cliente
     : (e.vatExempt ? 0 : vat * Math.min(e.deductPct, 100) / 100);

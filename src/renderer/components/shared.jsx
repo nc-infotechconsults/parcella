@@ -1,6 +1,29 @@
 // Shared layout components: Sidebar, Topbar
 const { useState, useEffect, useMemo, useRef } = React;
 
+const COMMESSA_COLORS = [
+  "oklch(0.6 0.13 250)", "oklch(0.65 0.12 180)", "oklch(0.65 0.13 50)",
+  "oklch(0.6 0.13 320)", "oklch(0.7 0.13 100)", "oklch(0.65 0.13 30)",
+  "oklch(0.6 0.12 280)", "oklch(0.7 0.10 220)", "oklch(0.55 0.14 15)",
+];
+
+function getClientContacts(client) {
+  if (client?.contacts?.length) return client.contacts;
+  if (client?.contact || client?.email) {
+    return [{ name: client.contact || "", role: "Principale", email: client.email || "" }];
+  }
+  return [];
+}
+
+function getClientInvoiceContact(client) {
+  const cts = getClientContacts(client);
+  return cts.find(c => c.role === "Fatturazione") || cts[0] || null;
+}
+
+window.COMMESSA_COLORS = COMMESSA_COLORS;
+window.getClientContacts = getClientContacts;
+window.getClientInvoiceContact = getClientInvoiceContact;
+
 const Sidebar = ({ active, onNav, clientCount, expenseCount, studio }) => {
   const u = studio || window.APP_DATA.user;
   return (
@@ -300,6 +323,13 @@ const ToastContainer = () => {
 };
 window.ToastContainer = ToastContainer;
 
+// P.IVA helpers — store bare number, display with prefix
+const normalizePIVA = (raw) => raw.replace(/^p\.?\s*iva\s*/i, '').trim();
+const fmtPIVA = (piva) => piva ? 'P.IVA ' + piva : '';
+
+window.normalizePIVA = normalizePIVA;
+window.fmtPIVA = fmtPIVA;
+
 // Currency format — locale-aware
 const fmtEUR = (n) => new Intl.NumberFormat(window._lang === 'en' ? 'en-GB' : 'it-IT', { style: 'currency', currency: 'EUR', minimumFractionDigits: 2 }).format(n);
 const fmtNum = (n, d = 2) => new Intl.NumberFormat(window._lang === 'en' ? 'en-GB' : 'it-IT', { minimumFractionDigits: d, maximumFractionDigits: d }).format(n);
@@ -334,7 +364,7 @@ function computeInvoiceAmounts(client, hours) {
 
   let withholding = 0;
   if (client.withholding) {
-    withholding = imponibile * 0.20; // 20% ritenuta
+    withholding = (imponibile + cassa) * 0.20;
   }
 
   total = imponibile + cassa + iva - withholding;

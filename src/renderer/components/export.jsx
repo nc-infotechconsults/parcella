@@ -92,12 +92,12 @@ function buildWordHTML(client, acts, exps, amounts, docNum, docDate, studio, mod
 <div style="border-bottom:2pt solid #1c1917;padding-bottom:12pt;margin-bottom:16pt">
 ${studio.logoDataUrl ? `<img src="${studio.logoDataUrl}" style="height:48pt;max-width:180pt;object-fit:contain;display:block;margin-bottom:8pt" alt="Logo" />` : ""}
 <h1 style="margin:0">${studio.firm}</h1>
-<p style="margin:4pt 0;color:#57534e;font-size:10pt">${studio.address}<br>${studio.piva} · C.F. ${studio.cf}<br>${studio.email}</p>
+<p style="margin:4pt 0;color:#57534e;font-size:10pt">${studio.address}<br>P.IVA ${studio.piva} · C.F. ${studio.cf}<br>${studio.email}</p>
 </div>
 <h1>Rapporto attività professionali</h1>
 <p style="color:#57534e">Documento n. <b>${docNum}</b> · emesso il ${docDate}</p>
-<p>Spett.le<br><b>${client.name}</b><br>${client.address}<br>${client.piva}</p>
-<p>Con la presente, lo scrivente <b>${studio.firm}</b> (${studio.piva}), trasmette il riepilogo delle attività svolte nel periodo <b>${docDate.replace("31/", "01/")} — ${docDate}</b> per un totale di <b>${fmtH(totalHours)}</b>.</p>
+<p>Spett.le<br><b>${client.name}</b><br>${client.address}<br>P.IVA ${client.piva}</p>
+<p>Con la presente, lo scrivente <b>${studio.firm}</b> (P.IVA ${studio.piva}), trasmette il riepilogo delle attività svolte nel periodo <b>${docDate.replace("31/", "01/")} — ${docDate}</b> per un totale di <b>${fmtH(totalHours)}</b>.</p>
 <h2>${mode === "summary" ? "Riepilogo per commessa" : "Dettaglio prestazioni"}</h2>
 <table><thead>${tableHead}</thead>
 <tbody>${tableRows}
@@ -148,6 +148,19 @@ const Export = ({ clients, activities, expenses, currentMonthKey, studio, curren
   const mm = String(cMonth + 1).padStart(2, "0");
   const docNum = `${cYear}-${String(monthClients.findIndex(c => c.id === selectedId) + 1).padStart(3, "0")}`;
   const docDate = `${String(lastDay).padStart(2,"0")}/${mm}/${cYear}`;
+
+  const handleSendEmail = () => {
+    const ct = getClientInvoiceContact(client);
+    if (!ct?.email) return;
+    if (format === "excel") handleDownloadCSV();
+    else if (format === "word") handleDownloadWord();
+    const subject = encodeURIComponent(`Rapporto attività ${monthLabel}`);
+    const body = encodeURIComponent("In allegato il rapporto attività.");
+    window.open(`mailto:${ct.email}?subject=${subject}&body=${body}`);
+    if (format !== "pdf") {
+      window.showToast("Documento scaricato — allegalo all'email", "info");
+    }
+  };
 
   const handlePrint = () => {
     document.body.classList.add("printing-export");
@@ -249,10 +262,10 @@ const Export = ({ clients, activities, expenses, currentMonthKey, studio, curren
                 <Icon name="download" size={14} /> Scarica DOC (Word)
               </button>
             )}
-            {client?.email && (
-              <a className="btn" style={{ justifyContent: "center" }} href={"mailto:" + client.email + "?subject=Rapporto attività " + monthLabel + "&body=In allegato il rapporto attività."}>
+            {getClientInvoiceContact(client)?.email && (
+              <button className="btn" style={{ justifyContent: "center" }} onClick={handleSendEmail}>
                 <Icon name="mail" size={14} /> Invia per email
-              </a>
+              </button>
             )}
           </div>
         </div>
@@ -289,7 +302,7 @@ const PdfPreview = ({ client, acts, exps = [], totalHours, amounts, docNum, docD
         )}
         <div className="firm">{user.firm}</div>
         <div>{user.address}</div>
-        <div>{user.piva}</div>
+        <div>{fmtPIVA(user.piva)}</div>
         <div>C.F. {user.cf}</div>
         <div>{user.email}</div>
       </div>
@@ -306,7 +319,7 @@ const PdfPreview = ({ client, acts, exps = [], totalHours, amounts, docNum, docD
         <div className="value big">{client.name}</div>
         <div className="value" style={{ color: "#57534e" }}>
           {client.address}<br />
-          {client.piva}
+          {fmtPIVA(client.piva)}
         </div>
       </div>
       <div className="block" style={{ textAlign: "right" }}>
@@ -423,7 +436,7 @@ const PdfPreview = ({ client, acts, exps = [], totalHours, amounts, docNum, docD
     </div>
 
     <div className="invoice-footer">
-      <span>{user.firm} — {user.piva}</span>
+      <span>{user.firm} — {fmtPIVA(user.piva)}</span>
       <span>Pag. 1 di 1</span>
     </div>
   </div>
@@ -560,11 +573,11 @@ const WordPreview = ({ client, acts, totalHours, amounts, docNum, docDate, user,
         Spett.le<br />
         <strong>{client.name}</strong><br />
         {client.address}<br />
-        {client.piva}
+        {fmtPIVA(client.piva)}
       </p>
 
       <p style={{ fontSize: 12, lineHeight: 1.7, marginTop: 24 }}>
-        Con la presente, lo scrivente <strong>{user.firm}</strong> ({user.piva}),
+        Con la presente, lo scrivente <strong>{user.firm}</strong> ({fmtPIVA(user.piva)}),
         in riferimento al contratto di prestazione professionale stipulato in data {client.contractStart},
         trasmette il riepilogo delle attività svolte nel periodo
         <strong> {periodStart} — {periodEnd}</strong> per un totale di <strong>{fmtH(totalHours)}</strong>.

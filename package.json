@@ -4,7 +4,7 @@
   "description": "Parcella — Clienti, attività, spese e fiscalità per professionisti",
   "author": "Parcella",
   "homepage": "https://parcella.app",
-  "main": "main.js",
+  "main": "src/main/main.js",
   "scripts": {
     "start": "electron .",
     "rebuild": "electron-builder install-app-deps",
@@ -20,10 +20,7 @@
     "copyright": "Copyright © 2025",
     "asar": true,
     "files": [
-      "Timesheet.html",
-      "*.js",
-      "*.jsx",
-      "*.css",
+      "src/**",
       "vendor/**",
       "build/icon.icns",
       "build/icon.png",

@@ -15,10 +15,12 @@ const Dashboard = ({ clients, activities, currentMonthKey, onNav }) => {
   const totalToInvoice = clientStats.reduce((s, x) => s + x.amounts.total, 0);
   const activeClients = clients.filter(c => c.status === "active").length;
 
-  // Last 7 days of activity for sparkline
-  const today = 6; // pretend today is May 6
+  // Last 14 days of activity for sparkline (highlights today if viewing current month)
+  const now = new Date();
+  const nowKey = monthKey(now.getFullYear(), now.getMonth());
+  const today = currentMonthKey === nowKey ? now.getDate() : -1;
   const last7 = Array.from({ length: 14 }, (_, i) => {
-    const day = today - 13 + i;
+    const day = today > 0 ? today - 13 + i : i + 1;
     const dayHours = monthActivities.filter(a => a.day === day).reduce((s, a) => s + a.hours, 0);
     return { day, hours: dayHours };
   });

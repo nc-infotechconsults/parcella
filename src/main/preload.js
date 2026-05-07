@@ -1,7 +1,6 @@
 const { contextBridge, ipcRenderer } = require('electron');
-const { version } = require('./package.json');
 
-contextBridge.exposeInMainWorld('APP_VERSION', version);
+contextBridge.exposeInMainWorld('APP_VERSION', ipcRenderer.sendSync('app:version'));
 
 // Window controls (existing)
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -36,3 +35,4 @@ contextBridge.exposeInMainWorld('api', {
     removePassphrase: ()    => ipcRenderer.invoke('crypto:removePassphrase'),
   },
 });
+
