@@ -290,8 +290,8 @@ const Timesheet = ({ clients, activities, currentYear, currentMonth, onNavMonth,
                         </td>
                         <td><strong>{c.shortName}</strong></td>
                         <td>
-                          <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                            <span style={{ width: 6, height: 6, borderRadius: 2, background: co.color }} />
+                            <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                            <span style={{ width: 6, height: 6, borderRadius: 2, background: co?.color || "var(--accent)" }} />
                             <span className="mono" style={{ fontSize: 11.5 }}>{a.commessa}</span>
                           </span>
                         </td>

@@ -373,7 +373,7 @@ const PdfPreview = ({ client, acts, exps = [], totalHours, amounts, docNum, docD
               <tr key={a.id}>
                 <td className="mono">{String(a.day).padStart(2, "0")}/{mm}/{cYear}</td>
                 <td className="mono" style={{ fontSize: 10 }}>{a.commessa}</td>
-                <td>{a.desc}<div style={{ fontSize: 9.5, color: "#78716c" }}>{co.name}</div></td>
+                <td>{a.desc}<div style={{ fontSize: 9.5, color: "#78716c" }}>{co?.name || ""}</div></td>
                 <td className="num">{fmtNum(a.hours, a.hours % 1 === 0 ? 0 : 1)}</td>
                 <td className="num">{fmtEUR(client.hourlyRate)}</td>
                 <td className="num">{fmtEUR(a.hours * client.hourlyRate)}</td>
