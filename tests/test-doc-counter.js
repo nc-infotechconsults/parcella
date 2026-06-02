@@ -1,57 +1,54 @@
 // tests/test-doc-counter.js
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const Database = require('better-sqlite3');
+const os = require('os');
+const path = require('path');
+const fs = require('fs');
+const AppDB = require('../src/main/db');
 
-function makeDB() {
-  const db = new Database(':memory:');
-  db.exec(`CREATE TABLE kv (key TEXT PRIMARY KEY, value TEXT NOT NULL, ts INTEGER DEFAULT (strftime('%s','now')))`);
-  return {
-    nextDocNumber(year) {
-      const key = `docCounter_${year}`;
-      const row = db.prepare('SELECT value FROM kv WHERE key = ?').get(key);
-      const next = (row ? JSON.parse(row.value) : 0) + 1;
-      db.prepare("INSERT OR REPLACE INTO kv (key,value,ts) VALUES (?,?,strftime('%s','now'))").run(key, JSON.stringify(next));
-      return next;
-    },
-    getDocCounter(year) {
-      const key = `docCounter_${year}`;
-      const row = db.prepare('SELECT value FROM kv WHERE key = ?').get(key);
-      return row ? JSON.parse(row.value) : 0;
-    },
-    resetDocCounter(year) {
-      const key = `docCounter_${year}`;
-      db.prepare("INSERT OR REPLACE INTO kv (key,value,ts) VALUES (?,?,strftime('%s','now'))").run(key, JSON.stringify(0));
-    },
-  };
+function makeTempDB() {
+  const p = path.join(os.tmpdir(), `parcella-test-${Date.now()}.db`);
+  const db = new AppDB(p);
+  return { db, cleanup: () => { db.close(); try { fs.unlinkSync(p); } catch {} } };
 }
 
 test('nextDocNumber starts at 1', () => {
-  const d = makeDB();
-  assert.equal(d.nextDocNumber(2026), 1);
+  const { db, cleanup } = makeTempDB();
+  try { assert.equal(db.nextDocNumber(2026), 1); } finally { cleanup(); }
 });
 
 test('nextDocNumber increments', () => {
-  const d = makeDB();
-  d.nextDocNumber(2026); d.nextDocNumber(2026);
-  assert.equal(d.nextDocNumber(2026), 3);
+  const { db, cleanup } = makeTempDB();
+  try {
+    db.nextDocNumber(2026); db.nextDocNumber(2026);
+    assert.equal(db.nextDocNumber(2026), 3);
+  } finally { cleanup(); }
 });
 
 test('counters are independent per year', () => {
-  const d = makeDB();
-  d.nextDocNumber(2025); d.nextDocNumber(2025);
-  assert.equal(d.nextDocNumber(2026), 1);
+  const { db, cleanup } = makeTempDB();
+  try {
+    db.nextDocNumber(2025); db.nextDocNumber(2025);
+    assert.equal(db.nextDocNumber(2026), 1);
+  } finally { cleanup(); }
 });
 
 test('getDocCounter returns 0 when uninitialised', () => {
-  const d = makeDB();
-  assert.equal(d.getDocCounter(2026), 0);
+  const { db, cleanup } = makeTempDB();
+  try { assert.equal(db.getDocCounter(2026), 0); } finally { cleanup(); }
 });
 
 test('resetDocCounter sets counter to 0, next call returns 1', () => {
-  const d = makeDB();
-  d.nextDocNumber(2026); d.nextDocNumber(2026);
-  d.resetDocCounter(2026);
-  assert.equal(d.getDocCounter(2026), 0);
-  assert.equal(d.nextDocNumber(2026), 1);
+  const { db, cleanup } = makeTempDB();
+  try {
+    db.nextDocNumber(2026); db.nextDocNumber(2026);
+    db.resetDocCounter(2026);
+    assert.equal(db.getDocCounter(2026), 0);
+    assert.equal(db.nextDocNumber(2026), 1);
+  } finally { cleanup(); }
+});
+
+test('nextDocNumber throws when year is missing', () => {
+  const { db, cleanup } = makeTempDB();
+  try { assert.throws(() => db.nextDocNumber(undefined), /year required/); } finally { cleanup(); }
 });

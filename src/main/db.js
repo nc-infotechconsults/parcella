@@ -92,22 +92,21 @@ class AppDB {
   }
 
   nextDocNumber(year) {
-    const key = `docCounter_${year}`;
-    const row = this.db.prepare('SELECT value FROM kv WHERE key = ?').get(key);
-    const next = (row ? JSON.parse(row.value) : 0) + 1;
-    this.db.prepare("INSERT OR REPLACE INTO kv (key,value,ts) VALUES (?,?,strftime('%s','now'))").run(key, JSON.stringify(next));
+    if (!year) throw new Error('year required');
+    const current = Number(this._getKV(`docCounter_${year}`)) || 0;
+    const next = current + 1;
+    this._setKV(`docCounter_${year}`, next);
     return next;
   }
 
   getDocCounter(year) {
-    const key = `docCounter_${year}`;
-    const row = this.db.prepare('SELECT value FROM kv WHERE key = ?').get(key);
-    return row ? JSON.parse(row.value) : 0;
+    if (!year) throw new Error('year required');
+    return Number(this._getKV(`docCounter_${year}`)) || 0;
   }
 
   resetDocCounter(year) {
-    const key = `docCounter_${year}`;
-    this.db.prepare("INSERT OR REPLACE INTO kv (key,value,ts) VALUES (?,?,strftime('%s','now'))").run(key, JSON.stringify(0));
+    if (!year) throw new Error('year required');
+    this._setKV(`docCounter_${year}`, 0);
   }
 
   exportJSON() {
