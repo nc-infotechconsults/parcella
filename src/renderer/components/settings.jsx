@@ -215,8 +215,8 @@ const DataBackupTab = ({ onResetData }) => {
       )}
 
       <div className="card" style={{ marginTop: 16 }}>
-        <div className="card-header" style={{ padding: "12px 16px" }}>
-          <h3 style={{ fontSize: 12.5 }}>Numerazione documenti</h3>
+        <div className="card-header">
+          <h3>Numerazione documenti</h3>
         </div>
         <div className="card-body" style={{ padding: 16 }}>
           <div style={{ fontSize: 13, marginBottom: 12 }}>
@@ -229,9 +229,13 @@ const DataBackupTab = ({ onResetData }) => {
             className="btn btn-danger btn-sm"
             onClick={async () => {
               if (!confirm(`Azzerare il contatore documenti per il ${currentYear}? Il prossimo documento sarà ${currentYear}-001.`)) return;
-              await window.api.db.resetDocCounter(currentYear);
-              setDocCounter(0);
-              window.showToast(`✓ Contatore ${currentYear} azzerato`, "success");
+              try {
+                await window.api.db.resetDocCounter(currentYear);
+                setDocCounter(0);
+                showStatus(`✓ Contatore ${currentYear} azzerato.`);
+              } catch (e) {
+                showStatus(`✗ ${e.message}`);
+              }
             }}
           >
             Reset contatore {currentYear}
