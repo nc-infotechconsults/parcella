@@ -126,7 +126,23 @@ const Export = ({ clients, activities, expenses, currentMonthKey, studio, curren
   const [selectedId, setSelectedId] = useState(monthClients[0]?.id || clients[0]?.id || "");
   const [format, setFormat] = useState("pdf");
   const [mode, setMode] = useState("detail"); // "detail" | "summary"
+  const [lockedDocNum, setLockedDocNum] = useState(null);
   const u = studio || window.APP_DATA.user;
+
+  useEffect(() => { setLockedDocNum(null); }, [selectedId, currentMonthKey]);
+
+  const getOrAssignDocNum = async () => {
+    if (lockedDocNum) return lockedDocNum;
+    let num;
+    if (window.api?.db?.nextDocNumber) {
+      const n = await window.api.db.nextDocNumber(cYear);
+      num = `${cYear}-${String(n).padStart(3, "0")}`;
+    } else {
+      num = `${cYear}-${String(monthClients.findIndex(c => c.id === selectedId) + 1).padStart(3, "0")}`;
+    }
+    setLockedDocNum(num);
+    return num;
+  };
 
   const client = clients.find(c => c.id === selectedId);
   const acts = activities
@@ -146,40 +162,43 @@ const Export = ({ clients, activities, expenses, currentMonthKey, studio, curren
   const monthLabel = MONTHS_IT[cMonth] + " " + cYear;
   const lastDay = daysInMonth(cYear, cMonth);
   const mm = String(cMonth + 1).padStart(2, "0");
-  const docNum = `${cYear}-${String(monthClients.findIndex(c => c.id === selectedId) + 1).padStart(3, "0")}`;
+  const docNum = lockedDocNum || `${cYear}-???`;
   const docDate = `${String(lastDay).padStart(2,"0")}/${mm}/${cYear}`;
 
-  const handleSendEmail = () => {
+  const handlePrint = async () => {
+    await getOrAssignDocNum();
+    document.body.classList.add("printing-export");
+    window.print();
+    setTimeout(() => document.body.classList.remove("printing-export"), 1000);
+  };
+
+  const handleDownloadCSV = async () => {
+    if (!client) return;
+    await getOrAssignDocNum();
+    const csv = buildCSV(client, acts, exps, amounts, u, monthLabel, mode, summaryRows);
+    const prefix = mode === "summary" ? "riepilogo" : "timesheet";
+    downloadBlob(csv, `${prefix}_${client.shortName}_${cYear}_${mm}.csv`, "text/csv;charset=utf-8;");
+  };
+
+  const handleDownloadWord = async () => {
+    if (!client) return;
+    const num = await getOrAssignDocNum();
+    const html = buildWordHTML(client, acts, exps, amounts, num, docDate, u, mode, summaryRows);
+    const prefix = mode === "summary" ? "riepilogo" : "rapporto";
+    downloadBlob(html, `${prefix}_${client.shortName}_${cYear}_${mm}.doc`, "application/msword");
+  };
+
+  const handleSendEmail = async () => {
     const ct = getClientInvoiceContact(client);
     if (!ct?.email) return;
-    if (format === "excel") handleDownloadCSV();
-    else if (format === "word") handleDownloadWord();
+    if (format === "excel") await handleDownloadCSV();
+    else if (format === "word") await handleDownloadWord();
     const subject = encodeURIComponent(`Rapporto attività ${monthLabel}`);
     const body = encodeURIComponent("In allegato il rapporto attività.");
     window.open(`mailto:${ct.email}?subject=${subject}&body=${body}`);
     if (format !== "pdf") {
       window.showToast("Documento scaricato — allegalo all'email", "info");
     }
-  };
-
-  const handlePrint = () => {
-    document.body.classList.add("printing-export");
-    window.print();
-    setTimeout(() => document.body.classList.remove("printing-export"), 1000);
-  };
-
-  const handleDownloadCSV = () => {
-    if (!client) return;
-    const csv = buildCSV(client, acts, exps, amounts, u, monthLabel, mode, summaryRows);
-    const prefix = mode === "summary" ? "riepilogo" : "timesheet";
-    downloadBlob(csv, `${prefix}_${client.shortName}_${cYear}_${mm}.csv`, "text/csv;charset=utf-8;");
-  };
-
-  const handleDownloadWord = () => {
-    if (!client) return;
-    const html = buildWordHTML(client, acts, exps, amounts, docNum, docDate, u, mode, summaryRows);
-    const prefix = mode === "summary" ? "riepilogo" : "rapporto";
-    downloadBlob(html, `${prefix}_${client.shortName}_${cYear}_${mm}.doc`, "application/msword");
   };
 
   return (
