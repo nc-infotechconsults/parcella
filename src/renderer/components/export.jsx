@@ -20,9 +20,13 @@ function buildSummaryRows(client, acts) {
 }
 
 function buildCSV(client, acts, exps, amounts, studio, monthLabel, mode, summaryRows) {
+  const isFixed = client.billingType === 'monthly' || client.billingType === 'project';
+  const feeLabel = client.billingType === 'monthly' ? 'Canone professionale mensile' : 'Acconto progetto';
+  const feeAmount = client.billingType === 'monthly' ? (client.monthlyRate || 0) : (client.projectMonthlyAmount || 0);
+  const totalHours = acts.reduce((s, a) => s + a.hours, 0);
+
   const totalsBlock = [
     [],
-    ["", "", "Totale ore", acts.reduce((s, a) => s + a.hours, 0).toFixed(2)],
     ["", "", "Imponibile", amounts.imponibile.toFixed(2)],
     ...(client.cassaIncluded ? [] : [["", "", `Cassa ${client.cassaPct}%`, amounts.cassa.toFixed(2)]]),
     ["", "", `IVA ${client.vatPct}%`, amounts.iva.toFixed(2)],
@@ -32,19 +36,35 @@ function buildCSV(client, acts, exps, amounts, studio, monthLabel, mode, summary
   ];
 
   let rows;
-  if (mode === "summary") {
+  if (isFixed) {
+    const actHeader = mode === "summary"
+      ? ["Commessa", "Descrizione", "Ore totali"]
+      : ["Data", "Commessa", "Descrizione", "Ore"];
+    const actRows = mode === "summary"
+      ? summaryRows.map(r => [r.code, r.name, r.hours])
+      : acts.map(a => {
+          const co = client.commesse.find(c => c.code === a.commessa);
+          const [y, m] = a.monthKey.split("-");
+          return [`${String(a.day).padStart(2,"0")}/${m}/${y}`, a.commessa + (co ? " — " + co.name : ""), a.desc, a.hours];
+        });
+    rows = [
+      [mode === "summary" ? "RIEPILOGO ATTIVITÀ — " + client.name.toUpperCase() : "TIMESHEET — " + client.name.toUpperCase()],
+      ["Periodo: " + monthLabel + " · " + studio.firm],
+      [],
+      [feeLabel, "", feeAmount.toFixed(2)],
+      ["Totale ore lavorate", "", totalHours.toFixed(2)],
+      [],
+      actHeader,
+      ...actRows,
+      ...totalsBlock,
+    ];
+  } else if (mode === "summary") {
     rows = [
       ["RIEPILOGO ATTIVITÀ — " + client.name.toUpperCase()],
       ["Periodo: " + monthLabel + " · " + studio.firm],
       [],
       ["Commessa", "Descrizione", "Ore totali", "Tariffa (€/h)", "Importo (€)"],
-      ...summaryRows.map(r => [
-        r.code,
-        r.name,
-        r.hours,
-        client.hourlyRate,
-        (r.hours * client.hourlyRate).toFixed(2),
-      ]),
+      ...summaryRows.map(r => [r.code, r.name, r.hours, client.hourlyRate, (r.hours * client.hourlyRate).toFixed(2)]),
       ...totalsBlock,
     ];
   } else {
@@ -56,14 +76,7 @@ function buildCSV(client, acts, exps, amounts, studio, monthLabel, mode, summary
       ...acts.map(a => {
         const co = client.commesse.find(c => c.code === a.commessa);
         const [y, m] = a.monthKey.split("-");
-        return [
-          `${String(a.day).padStart(2,"0")}/${m}/${y}`,
-          a.commessa + (co ? " — " + co.name : ""),
-          a.desc,
-          a.hours,
-          client.hourlyRate,
-          (a.hours * client.hourlyRate).toFixed(2),
-        ];
+        return [`${String(a.day).padStart(2,"0")}/${m}/${y}`, a.commessa + (co ? " — " + co.name : ""), a.desc, a.hours, client.hourlyRate, (a.hours * client.hourlyRate).toFixed(2)];
       }),
       ...totalsBlock,
     ];
@@ -73,17 +86,57 @@ function buildCSV(client, acts, exps, amounts, studio, monthLabel, mode, summary
 
 function buildWordHTML(client, acts, exps, amounts, docNum, docDate, studio, mode, summaryRows) {
   const totalHours = acts.reduce((s, a) => s + a.hours, 0);
-  const tableRows = mode === "summary"
-    ? summaryRows.map(r => `<tr><td style="font-family:monospace;font-size:10px">${r.code}</td><td>${r.name}</td><td align="right">${fmtNum(r.hours, r.hours%1===0?0:1)}</td><td align="right">${fmtEUR(r.hours*client.hourlyRate)}</td></tr>`).join("")
-    : acts.map(a => {
-        const co = client.commesse.find(c => c.code === a.commessa);
-        const [y, m] = a.monthKey.split("-");
-        return `<tr><td>${String(a.day).padStart(2,"0")}/${m}/${y}</td><td style="font-family:monospace;font-size:10px">${a.commessa}</td><td>${a.desc}${co ? '<br><small style="color:#78716c">'+co.name+'</small>' : ''}</td><td align="right">${fmtNum(a.hours, a.hours%1===0?0:1)}</td><td align="right">${fmtEUR(a.hours*client.hourlyRate)}</td></tr>`;
-      }).join("");
-  const tableHead = mode === "summary"
-    ? `<tr><th>Commessa</th><th>Descrizione</th><th>Ore totali</th><th>Importo</th></tr>`
-    : `<tr><th>Data</th><th>Commessa</th><th>Descrizione</th><th>Ore</th><th>Importo</th></tr>`;
-  const totalCols = mode === "summary" ? 2 : 3;
+  const isFixed = client.billingType === 'monthly' || client.billingType === 'project';
+  const feeLabel = client.billingType === 'monthly' ? 'Canone professionale mensile' : 'Acconto progetto';
+  const feeAmount = client.billingType === 'monthly' ? (client.monthlyRate || 0) : (client.projectMonthlyAmount || 0);
+  const contractNote = client.billingType === 'monthly'
+    ? `Canone mensile: ${fmtEUR(client.monthlyRate)} · ${client.monthlyHours}h/mese`
+    : client.billingType === 'project'
+    ? `Progetto: compenso totale ${fmtEUR(client.projectFee)} · ${client.projectEstimatedHours}h previste`
+    : '';
+
+  let mainTable;
+  if (isFixed) {
+    const actRows = mode === "summary"
+      ? summaryRows.map(r => `<tr><td style="font-family:monospace;font-size:10px">${r.code}</td><td>${r.name}</td><td align="right">${fmtNum(r.hours, r.hours%1===0?0:1)}</td></tr>`).join("")
+      : acts.map(a => {
+          const co = client.commesse.find(c => c.code === a.commessa);
+          const [y, m] = a.monthKey.split("-");
+          return `<tr><td>${String(a.day).padStart(2,"0")}/${m}/${y}</td><td style="font-family:monospace;font-size:10px">${a.commessa}</td><td>${a.desc}${co ? '<br><small style="color:#78716c">'+co.name+'</small>' : ''}</td><td align="right">${fmtNum(a.hours, a.hours%1===0?0:1)}</td></tr>`;
+        }).join("");
+    const actHead = mode === "summary"
+      ? `<tr><th>Commessa</th><th>Descrizione</th><th>Ore totali</th></tr>`
+      : `<tr><th>Data</th><th>Commessa</th><th>Descrizione</th><th>Ore</th></tr>`;
+    mainTable = `
+      <table style="width:100%;border-collapse:collapse;margin:12pt 0">
+        <thead><tr><th style="background:#1c1917;color:white;padding:6pt 8pt;text-align:left" colspan="2">${feeLabel}</th><th style="background:#1c1917;color:white;padding:6pt 8pt;text-align:right">${fmtEUR(feeAmount)}</th></tr></thead>
+      </table>
+      <h2 style="font-size:12pt;border-bottom:1px solid #d6d3d1;padding-bottom:4pt;margin-top:16pt">Dettaglio attività</h2>
+      <table style="width:100%;border-collapse:collapse;margin:8pt 0">
+        <thead>${actHead}</thead>
+        <tbody>${actRows}
+          <tr style="border-top:2pt solid #1c1917;font-weight:bold"><td colspan="${mode === "summary" ? 2 : 3}">Totale ore</td><td align="right">${fmtNum(totalHours, totalHours%1===0?0:1)} h</td></tr>
+        </tbody>
+      </table>`;
+  } else {
+    const tableRows = mode === "summary"
+      ? summaryRows.map(r => `<tr><td style="font-family:monospace;font-size:10px">${r.code}</td><td>${r.name}</td><td align="right">${fmtNum(r.hours, r.hours%1===0?0:1)}</td><td align="right">${fmtEUR(r.hours*client.hourlyRate)}</td></tr>`).join("")
+      : acts.map(a => {
+          const co = client.commesse.find(c => c.code === a.commessa);
+          const [y, m] = a.monthKey.split("-");
+          return `<tr><td>${String(a.day).padStart(2,"0")}/${m}/${y}</td><td style="font-family:monospace;font-size:10px">${a.commessa}</td><td>${a.desc}${co ? '<br><small style="color:#78716c">'+co.name+'</small>' : ''}</td><td align="right">${fmtNum(a.hours, a.hours%1===0?0:1)}</td><td align="right">${fmtEUR(a.hours*client.hourlyRate)}</td></tr>`;
+        }).join("");
+    const tableHead = mode === "summary"
+      ? `<tr><th>Commessa</th><th>Descrizione</th><th>Ore totali</th><th>Importo</th></tr>`
+      : `<tr><th>Data</th><th>Commessa</th><th>Descrizione</th><th>Ore</th><th>Importo</th></tr>`;
+    const totalCols = mode === "summary" ? 2 : 3;
+    mainTable = `<table style="width:100%;border-collapse:collapse;margin:12pt 0">
+      <thead style="background:#1c1917;color:white">${tableHead}</thead>
+      <tbody>${tableRows}
+        <tr style="border-top:2pt solid #1c1917;font-weight:bold"><td colspan="${totalCols}">Totale</td><td align="right">${fmtNum(totalHours, totalHours%1===0?0:1)} h</td><td align="right">${fmtEUR(amounts.imponibile)}</td></tr>
+      </tbody></table>`;
+  }
+
   return `<!DOCTYPE html>
 <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
 <head><meta charset='utf-8'><title>Rapporto attività — ${client.name}</title>
@@ -96,13 +149,11 @@ ${studio.logoDataUrl ? `<img src="${studio.logoDataUrl}" style="height:48pt;max-
 </div>
 <h1>Rapporto attività professionali</h1>
 <p style="color:#57534e">Documento n. <b>${docNum}</b> · emesso il ${docDate}</p>
+${contractNote ? `<p style="font-size:10pt;color:#57534e;font-style:italic">Contratto: ${contractNote}</p>` : ''}
 <p>Spett.le<br><b>${client.name}</b><br>${client.address}<br>P.IVA ${client.piva}</p>
-<p>Con la presente, lo scrivente <b>${studio.firm}</b> (P.IVA ${studio.piva}), trasmette il riepilogo delle attività svolte nel periodo <b>${docDate.replace("31/", "01/")} — ${docDate}</b> per un totale di <b>${fmtH(totalHours)}</b>.</p>
+<p>Con la presente, lo scrivente <b>${studio.firm}</b> (P.IVA ${studio.piva}), trasmette il riepilogo delle attività svolte nel periodo <b>${docDate.replace("31/", "01/")} — ${docDate}</b>${isFixed ? '' : ` per un totale di <b>${fmtH(totalHours)}</b>`}.</p>
 <h2>${mode === "summary" ? "Riepilogo per commessa" : "Dettaglio prestazioni"}</h2>
-<table><thead>${tableHead}</thead>
-<tbody>${tableRows}
-<tr style="border-top:2pt solid #1c1917;font-weight:bold"><td colspan="${totalCols}">Totale</td><td align="right">${fmtNum(totalHours, totalHours%1===0?0:1)} h</td><td align="right">${fmtEUR(amounts.imponibile)}</td></tr>
-</tbody></table>
+${mainTable}
 <h2>Riepilogo economico</h2>
 <table style="width:320pt;margin-left:auto"><tbody>
 <tr><td>Imponibile</td><td align="right">${fmtEUR(amounts.imponibile)}</td></tr>
@@ -329,6 +380,13 @@ const PdfPreview = ({ client, acts, exps = [], totalHours, amounts, docNum, docD
         <div className="label">Rapporto attività</div>
         <div className="num">N. {docNum}</div>
         <div style={{ fontSize: 11, color: "#57534e", marginTop: 6 }}>Data emissione<br /><strong style={{ color: "#1c1917" }}>{docDate}</strong></div>
+        {(client.billingType === 'monthly' || client.billingType === 'project') && (
+          <div style={{ fontSize: 10, color: "#78716c", marginTop: 4 }}>
+            {client.billingType === 'monthly'
+              ? `Canone mensile ${fmtEUR(client.monthlyRate)} · ${client.monthlyHours}h/mese`
+              : `Progetto: ${fmtEUR(client.projectFee)} totali · ${client.projectEstimatedHours}h stimate`}
+          </div>
+        )}
       </div>
     </div>
 
@@ -350,7 +408,77 @@ const PdfPreview = ({ client, acts, exps = [], totalHours, amounts, docNum, docD
       </div>
     </div>
 
-    {mode === "summary" ? (
+    {(client.billingType === 'monthly' || client.billingType === 'project') ? (
+      <>
+        <table className="invoice">
+          <thead>
+            <tr>
+              <th colSpan="3">Descrizione</th>
+              <th className="num" style={{ width: 90 }}>Importo</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td colSpan="3">
+                {client.billingType === 'monthly' ? 'Canone professionale mensile' : 'Acconto progetto'} — {monthLabel}
+                {client.billingType === 'monthly' && (
+                  <div style={{ fontSize: 9.5, color: "#78716c" }}>
+                    Contratto: {client.monthlyHours}h/mese · tariffa implicita {fmtEUR(client.monthlyHours > 0 ? client.monthlyRate / client.monthlyHours : 0)}/h
+                  </div>
+                )}
+              </td>
+              <td className="num">
+                {fmtEUR(client.billingType === 'monthly' ? (client.monthlyRate || 0) : (client.projectMonthlyAmount || 0))}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <h3 style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: "#44403c", margin: "8px 0 6px" }}>
+          {mode === "summary" ? "Riepilogo per commessa" : "Dettaglio attività"}
+        </h3>
+        <table className="invoice">
+          <thead>
+            {mode === "summary" ? (
+              <tr>
+                <th style={{ width: 100 }}>Commessa</th>
+                <th>Descrizione</th>
+                <th className="num" style={{ width: 70 }}>Ore totali</th>
+              </tr>
+            ) : (
+              <tr>
+                <th style={{ width: 70 }}>Data</th>
+                <th style={{ width: 100 }}>Commessa</th>
+                <th>Descrizione attività</th>
+                <th className="num" style={{ width: 50 }}>Ore</th>
+              </tr>
+            )}
+          </thead>
+          <tbody>
+            {mode === "summary" ? summaryRows.map(r => (
+              <tr key={r.code}>
+                <td className="mono" style={{ fontSize: 10 }}>{r.code}</td>
+                <td>{r.name}</td>
+                <td className="num">{fmtNum(r.hours, r.hours % 1 === 0 ? 0 : 1)}</td>
+              </tr>
+            )) : acts.map(a => {
+              const co = client.commesse.find(c => c.code === a.commessa);
+              return (
+                <tr key={a.id}>
+                  <td className="mono">{String(a.day).padStart(2, "0")}/{mm}/{cYear}</td>
+                  <td className="mono" style={{ fontSize: 10 }}>{a.commessa}</td>
+                  <td>{a.desc}<div style={{ fontSize: 9.5, color: "#78716c" }}>{co?.name || ""}</div></td>
+                  <td className="num">{fmtNum(a.hours, a.hours % 1 === 0 ? 0 : 1)}</td>
+                </tr>
+              );
+            })}
+            <tr style={{ borderTop: "1px solid #e7e5e4", fontWeight: 600 }}>
+              <td colSpan={mode === "summary" ? 2 : 3}>Totale ore</td>
+              <td className="num">{fmtNum(totalHours, totalHours % 1 === 0 ? 0 : 1)} h</td>
+            </tr>
+          </tbody>
+        </table>
+      </>
+    ) : mode === "summary" ? (
       <table className="invoice">
         <thead>
           <tr>
