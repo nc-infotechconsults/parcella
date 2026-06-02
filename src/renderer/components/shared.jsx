@@ -346,28 +346,25 @@ const dowOfDay = (year, month, day) => new Date(year, month, day).getDay();
 
 // Compute amounts for a given client + hours
 function computeInvoiceAmounts(client, hours) {
-  const baseImponibile = hours * client.hourlyRate; // before cassa
-  let imponibile, cassa, iva, total;
-
-  if (client.cassaIncluded) {
-    // tariff includes cassa - the imponibile reported is the base
-    imponibile = baseImponibile;
-    cassa = 0; // cassa is "internal" and not billed separately
-    const ivaBase = imponibile;
-    iva = (ivaBase * client.vatPct) / 100;
+  let imponibile;
+  if (client.billingType === 'monthly') {
+    imponibile = client.monthlyRate || 0;
+  } else if (client.billingType === 'project') {
+    imponibile = client.projectMonthlyAmount || 0;
   } else {
-    imponibile = baseImponibile;
+    imponibile = hours * client.hourlyRate;
+  }
+
+  let cassa, iva, withholding;
+  if (client.cassaIncluded) {
+    cassa = 0;
+    iva = (imponibile * client.vatPct) / 100;
+  } else {
     cassa = (imponibile * client.cassaPct) / 100;
-    const ivaBase = imponibile + cassa;
-    iva = (ivaBase * client.vatPct) / 100;
+    iva = ((imponibile + cassa) * client.vatPct) / 100;
   }
-
-  let withholding = 0;
-  if (client.withholding) {
-    withholding = (imponibile + cassa) * 0.20;
-  }
-
-  total = imponibile + cassa + iva - withholding;
+  withholding = client.withholding ? (imponibile + cassa) * 0.20 : 0;
+  const total = imponibile + cassa + iva - withholding;
   return { imponibile, cassa, iva, withholding, total };
 }
 
