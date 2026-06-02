@@ -11,6 +11,12 @@ const ClientForm = ({ client, onSave, onCancel }) => {
     email: "",
     status: "active",
     hourlyRate: 80,
+    billingType: "hourly",
+    monthlyRate: 0,
+    monthlyHours: 160,
+    projectFee: 0,
+    projectEstimatedHours: 0,
+    projectMonthlyAmount: 0,
     hoursPlafond: 30,
     cassaPct: 4,
     cassaIncluded: false,
@@ -26,6 +32,11 @@ const ClientForm = ({ client, onSave, onCancel }) => {
   const update = (patch) => setData(d => ({ ...d, ...patch }));
 
   const exampleAmounts = computeInvoiceAmounts(data, 10);
+  const previewLabel = data.billingType === 'monthly'
+    ? `Canone mensile ${fmtEUR(data.monthlyRate)}`
+    : data.billingType === 'project'
+    ? `Acconto ${fmtEUR(data.projectMonthlyAmount)}`
+    : `10 ore × ${fmtEUR(data.hourlyRate)}/h`;
 
   return (
     <>
@@ -69,21 +80,93 @@ const ClientForm = ({ client, onSave, onCancel }) => {
           <div>
             <h3 className="section-title">Condizioni economiche</h3>
             <div className="form-grid">
-              <div className="field">
-                <label>Tariffa oraria</label>
-                <div className="input-group">
-                  <input className="input mono" type="number" value={data.hourlyRate} onChange={e => update({ hourlyRate: +e.target.value })} />
-                  <div className="addon">€/h</div>
+              <div className="field full">
+                <label>Tipo fatturazione</label>
+                <div style={{ display: "flex", background: "var(--bg-sunken)", borderRadius: "var(--radius-sm)", padding: 3, gap: 3 }}>
+                  {[["hourly","A ore"],["monthly","Canone mensile"],["project","A progetto"]].map(([v, label]) => (
+                    <button
+                      key={v}
+                      type="button"
+                      className={"btn btn-sm" + (data.billingType === v ? " btn-primary" : "")}
+                      style={{ flex: 1, justifyContent: "center" }}
+                      onClick={() => update({ billingType: v })}
+                    >{label}</button>
+                  ))}
                 </div>
               </div>
-              <div className="field">
-                <label>Ore plafond mensile</label>
-                <div className="input-group">
-                  <input className="input mono" type="number" value={data.hoursPlafond} onChange={e => update({ hoursPlafond: +e.target.value })} />
-                  <div className="addon">h/mese</div>
-                </div>
-                <div className="hint">Limite mensile da contratto. Lascia 0 per illimitato.</div>
-              </div>
+
+              {data.billingType === "hourly" && (
+                <>
+                  <div className="field">
+                    <label>Tariffa oraria</label>
+                    <div className="input-group">
+                      <input className="input mono" type="number" value={data.hourlyRate} onChange={e => update({ hourlyRate: +e.target.value })} />
+                      <div className="addon">€/h</div>
+                    </div>
+                  </div>
+                  <div className="field">
+                    <label>Ore plafond mensile</label>
+                    <div className="input-group">
+                      <input className="input mono" type="number" value={data.hoursPlafond} onChange={e => update({ hoursPlafond: +e.target.value })} />
+                      <div className="addon">h/mese</div>
+                    </div>
+                    <div className="hint">Limite mensile da contratto. Lascia 0 per illimitato.</div>
+                  </div>
+                </>
+              )}
+
+              {data.billingType === "monthly" && (
+                <>
+                  <div className="field">
+                    <label>Canone mensile (imponibile)</label>
+                    <div className="input-group">
+                      <input className="input mono" type="number" value={data.monthlyRate} onChange={e => update({ monthlyRate: +e.target.value })} />
+                      <div className="addon">€/mese</div>
+                    </div>
+                  </div>
+                  <div className="field">
+                    <label>Ore contratto mensile</label>
+                    <div className="input-group">
+                      <input className="input mono" type="number" value={data.monthlyHours} onChange={e => update({ monthlyHours: +e.target.value })} />
+                      <div className="addon">h/mese</div>
+                    </div>
+                    <div className="hint">
+                      Tariffa implicita: {data.monthlyHours > 0 ? fmtEUR(data.monthlyRate / data.monthlyHours) : "—"}/h
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {data.billingType === "project" && (
+                <>
+                  <div className="field">
+                    <label>Compenso totale progetto</label>
+                    <div className="input-group">
+                      <input className="input mono" type="number" value={data.projectFee} onChange={e => update({ projectFee: +e.target.value })} />
+                      <div className="addon">€</div>
+                    </div>
+                  </div>
+                  <div className="field">
+                    <label>Ore stimate totali</label>
+                    <div className="input-group">
+                      <input className="input mono" type="number" value={data.projectEstimatedHours} onChange={e => update({ projectEstimatedHours: +e.target.value })} />
+                      <div className="addon">h</div>
+                    </div>
+                    <div className="hint">
+                      Tariffa stimata: {data.projectEstimatedHours > 0 ? fmtEUR(data.projectFee / data.projectEstimatedHours) : "—"}/h
+                    </div>
+                  </div>
+                  <div className="field">
+                    <label>Acconto mensile (imponibile)</label>
+                    <div className="input-group">
+                      <input className="input mono" type="number" value={data.projectMonthlyAmount} onChange={e => update({ projectMonthlyAmount: +e.target.value })} />
+                      <div className="addon">€/mese</div>
+                    </div>
+                    <div className="hint">Importo fatturato ogni mese per questo progetto.</div>
+                  </div>
+                </>
+              )}
+
               <div className="field">
                 <label>Cassa previdenza</label>
                 <div className="input-group">
@@ -91,11 +174,7 @@ const ClientForm = ({ client, onSave, onCancel }) => {
                   <div className="addon">%</div>
                 </div>
                 <label className="checkbox-row" style={{ marginTop: 4 }}>
-                  <input
-                    type="checkbox"
-                    checked={data.cassaIncluded}
-                    onChange={e => update({ cassaIncluded: e.target.checked })}
-                  />
+                  <input type="checkbox" checked={data.cassaIncluded} onChange={e => update({ cassaIncluded: e.target.checked })} />
                   Inclusa nella tariffa (non addebitata in fattura)
                 </label>
               </div>
@@ -110,11 +189,7 @@ const ClientForm = ({ client, onSave, onCancel }) => {
               <div className="field">
                 <label>Ritenuta d'acconto</label>
                 <label className="checkbox-row">
-                  <input
-                    type="checkbox"
-                    checked={data.withholding}
-                    onChange={e => update({ withholding: e.target.checked })}
-                  />
+                  <input type="checkbox" checked={data.withholding} onChange={e => update({ withholding: e.target.checked })} />
                   Applica ritenuta 20% sull'imponibile
                 </label>
               </div>
@@ -157,7 +232,7 @@ const ClientForm = ({ client, onSave, onCancel }) => {
             </div>
             <div className="card-body" style={{ padding: 16 }}>
               <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 10 }}>
-                Esempio per <strong style={{ color: "var(--text)" }}>10 ore</strong> di lavoro
+                Anteprima: <strong style={{ color: "var(--text)" }}>{previewLabel}</strong>
               </div>
               <div className="calc-summary">
                 <div className="calc-row">
