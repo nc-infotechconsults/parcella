@@ -40,6 +40,27 @@ class AppDBJson {
     this._save();
   }
 
+  nextDocNumber(year) {
+    if (!year) throw new Error('year required');
+    if (!this._data.docCounters) this._data.docCounters = {};
+    const next = (this._data.docCounters[String(year)] || 0) + 1;
+    this._data.docCounters[String(year)] = next;
+    this._save();
+    return next;
+  }
+
+  getDocCounter(year) {
+    if (!year) throw new Error('year required');
+    return (this._data.docCounters || {})[String(year)] || 0;
+  }
+
+  resetDocCounter(year) {
+    if (!year) throw new Error('year required');
+    if (!this._data.docCounters) this._data.docCounters = {};
+    this._data.docCounters[String(year)] = 0;
+    this._save();
+  }
+
   exportJSON() {
     return JSON.stringify(this._data, null, 2);
   }
