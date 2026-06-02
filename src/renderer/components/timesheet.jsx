@@ -88,7 +88,11 @@ const Timesheet = ({ clients, activities, currentYear, currentMonth, onNavMonth,
   });
 
   const grandTotal = Object.values(rowTotals).reduce((s, v) => s + v, 0);
-  const grandAmount = rows.reduce((s, r) => s + rowTotals[r.key] * r.client.hourlyRate, 0);
+  const grandAmount = rows.reduce((s, r) => {
+    if (r.client.billingType === 'monthly') return s;
+    if (r.client.billingType === 'project') return s;
+    return s + rowTotals[r.key] * r.client.hourlyRate;
+  }, 0);
 
   // Grid template: row header (240px) + N day cells (38px each) + total (60px)
   const dayColW = 38;
@@ -160,7 +164,15 @@ const Timesheet = ({ clients, activities, currentYear, currentMonth, onNavMonth,
                     <span style={{ width: 8, height: 8, borderRadius: 2, background: r.commessa.color }} />
                     {r.client.shortName} · {r.commessa.name}
                   </div>
-                  <div className="commessa">{r.commessa.code} · {fmtEUR(r.client.hourlyRate)}/h</div>
+                  <div className="commessa">
+                    {r.commessa.code} · {
+                      r.client.billingType === 'monthly'
+                        ? `canone ${fmtEUR(r.client.monthlyRate)}/mese`
+                        : r.client.billingType === 'project'
+                        ? `progetto ${fmtEUR(r.client.projectFee)}`
+                        : `${fmtEUR(r.client.hourlyRate)}/h`
+                    }
+                  </div>
                 </div>
                 {Array.from({ length: dim }, (_, i) => {
                   const d = i + 1;
@@ -186,7 +198,10 @@ const Timesheet = ({ clients, activities, currentYear, currentMonth, onNavMonth,
                   {fmtNum(rowTotals[r.key], rowTotals[r.key] % 1 === 0 ? 0 : 1)}
                 </div>
                 <div className="ts-cell" style={{ justifyContent: "flex-end", paddingRight: 14, fontFamily: "var(--font-mono)", fontWeight: 500, fontSize: 12.5 }}>
-                  {fmtEUR(rowTotals[r.key] * r.client.hourlyRate)}
+                  {r.client.billingType === 'monthly' || r.client.billingType === 'project'
+                    ? <span style={{ color: "var(--text-muted)", fontSize: 11 }}>canone</span>
+                    : fmtEUR(rowTotals[r.key] * r.client.hourlyRate)
+                  }
                 </div>
               </React.Fragment>
             ))}
