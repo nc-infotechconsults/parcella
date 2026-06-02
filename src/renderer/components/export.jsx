@@ -357,6 +357,7 @@ const Export = ({ clients, activities, expenses, currentMonthKey, studio, curren
           {format === "pdf" && client && <PdfPreview client={client} acts={acts} exps={exps} totalHours={totalHours} amounts={amounts} docNum={docNum} docDate={docDate} user={u} monthLabel={monthLabel} periodStart={`01/${mm}/${cYear}`} periodEnd={docDate} cYear={cYear} mm={mm} mode={mode} summaryRows={summaryRows} />}
           {format === "excel" && client && <ExcelPreview client={client} acts={acts} totalHours={totalHours} amounts={amounts} user={u} monthLabel={monthLabel} periodStart={`01/${mm}/${cYear}`} periodEnd={docDate} cYear={cYear} mm={mm} mode={mode} summaryRows={summaryRows} />}
           {format === "word" && client && <WordPreview client={client} acts={acts} totalHours={totalHours} amounts={amounts} docNum={docNum} docDate={docDate} user={u} monthLabel={monthLabel} periodStart={`01/${mm}/${cYear}`} periodEnd={docDate} cYear={cYear} mm={mm} mode={mode} summaryRows={summaryRows} />}
+          <ReconciliationPanel client={client} acts={acts} allActivities={activities} />
         </div>
       </div>
     </div>
@@ -809,5 +810,170 @@ const WordPreview = ({ client, acts, totalHours, amounts, docNum, docDate, user,
     </div>
   </div>
 );
+
+const ReconciliationPanel = ({ client, acts, allActivities }) => {
+  if (!client || (client.billingType !== 'monthly' && client.billingType !== 'project')) return null;
+
+  const totalRealHours = acts.reduce((s, a) => s + a.hours, 0);
+  const byCommessa = {};
+  acts.forEach(a => {
+    if (!byCommessa[a.commessa]) {
+      const co = client.commesse.find(c => c.code === a.commessa);
+      byCommessa[a.commessa] = { code: a.commessa, name: co?.name || a.commessa, hours: 0 };
+    }
+    byCommessa[a.commessa].hours += a.hours;
+  });
+  const commessaRows = Object.values(byCommessa);
+
+  const panelStyle = {
+    marginTop: 16, padding: 16,
+    background: "var(--bg-sunken)", borderRadius: "var(--radius)",
+    border: "1px solid var(--border)",
+  };
+  const labelStyle = { color: "var(--text-muted)" };
+  const rowStyle = { display: "flex", justifyContent: "space-between", fontSize: 12, padding: "3px 0" };
+
+  if (client.billingType === 'monthly') {
+    const contracted = client.monthlyHours || 0;
+    const fee = client.monthlyRate || 0;
+    const effectiveRate = totalRealHours > 0 ? fee / totalRealHours : 0;
+    const contractedRate = contracted > 0 ? fee / contracted : 0;
+    const utilization = contracted > 0 ? (totalRealHours / contracted) * 100 : 0;
+    const indicatorColor = utilization > 110 ? "var(--danger)" : utilization > 90 ? "#a16207" : "oklch(0.45 0.14 145)";
+
+    return (
+      <div style={panelStyle}>
+        <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--text-muted)", marginBottom: 12, fontWeight: 600 }}>
+          Riconciliazione canone — solo uso interno
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>Lavoro reale</div>
+            <table style={{ width: "100%", fontSize: 12, borderCollapse: "collapse" }}>
+              <thead>
+                <tr style={{ color: "var(--text-muted)", borderBottom: "1px solid var(--border)" }}>
+                  <th style={{ textAlign: "left", fontWeight: 500, padding: "3px 0" }}>Commessa</th>
+                  <th style={{ textAlign: "right", fontWeight: 500 }}>Ore</th>
+                  <th style={{ textAlign: "right", fontWeight: 500 }}>%</th>
+                </tr>
+              </thead>
+              <tbody>
+                {commessaRows.map(r => (
+                  <tr key={r.code}>
+                    <td style={{ fontFamily: "var(--font-mono)", fontSize: 11, padding: "3px 0" }}>{r.code}</td>
+                    <td style={{ textAlign: "right" }}>{fmtH(r.hours)}</td>
+                    <td style={{ textAlign: "right", color: "var(--text-muted)" }}>
+                      {totalRealHours > 0 ? fmtNum((r.hours / totalRealHours) * 100, 1) + "%" : "—"}
+                    </td>
+                  </tr>
+                ))}
+                <tr style={{ borderTop: "1px solid var(--border)", fontWeight: 600 }}>
+                  <td style={{ padding: "4px 0" }}>Totale</td>
+                  <td style={{ textAlign: "right" }}>{fmtH(totalRealHours)}</td>
+                  <td></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>Adeguamento contratto</div>
+            <div style={rowStyle}><span style={labelStyle}>Ore contratto</span><span>{fmtH(contracted)}</span></div>
+            <div style={rowStyle}><span style={labelStyle}>Ore lavorate</span><span>{fmtH(totalRealHours)}</span></div>
+            <div style={rowStyle}>
+              <span style={labelStyle}>Delta</span>
+              <span style={{ color: totalRealHours > contracted ? "var(--danger)" : "inherit" }}>
+                {totalRealHours >= contracted ? "+" : ""}{fmtH(totalRealHours - contracted)}
+              </span>
+            </div>
+            <div style={rowStyle}>
+              <span style={labelStyle}>Utilizzo</span>
+              <span style={{ color: indicatorColor, fontWeight: 600 }}>{fmtNum(utilization, 1)}%</span>
+            </div>
+          </div>
+        </div>
+        <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid var(--border)", display: "flex", flexWrap: "wrap", gap: 24, fontSize: 12 }}>
+          <div>
+            <span style={labelStyle}>Tariffa contrattuale: </span>
+            <strong>{fmtEUR(contractedRate)}/h</strong>
+            <span style={{ ...labelStyle, fontSize: 11 }}> ({fmtH(contracted)})</span>
+          </div>
+          <div>
+            <span style={labelStyle}>Tariffa effettiva: </span>
+            <strong style={{ color: effectiveRate > contractedRate ? "oklch(0.45 0.14 145)" : "inherit" }}>
+              {fmtEUR(effectiveRate)}/h
+            </strong>
+            <span style={{ ...labelStyle, fontSize: 11 }}> ({fmtH(totalRealHours)} reali)</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // billingType === 'project'
+  const allClientActs = (allActivities || []).filter(a => a.clientId === client.id);
+  const cumulativeHours = allClientActs.reduce((s, a) => s + a.hours, 0);
+  const estimated = client.projectEstimatedHours || 0;
+  const totalFee = client.projectFee || 0;
+  const effectiveRate = cumulativeHours > 0 ? totalFee / cumulativeHours : 0;
+  const estimatedRate = estimated > 0 ? totalFee / estimated : 0;
+  const progress = estimated > 0 ? (cumulativeHours / estimated) * 100 : 0;
+
+  return (
+    <div style={panelStyle}>
+      <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--text-muted)", marginBottom: 12, fontWeight: 600 }}>
+        Avanzamento progetto — solo uso interno
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+        <div>
+          <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>Questo mese</div>
+          <table style={{ width: "100%", fontSize: 12, borderCollapse: "collapse" }}>
+            <thead>
+              <tr style={{ color: "var(--text-muted)", borderBottom: "1px solid var(--border)" }}>
+                <th style={{ textAlign: "left", fontWeight: 500, padding: "3px 0" }}>Commessa</th>
+                <th style={{ textAlign: "right", fontWeight: 500 }}>Ore</th>
+              </tr>
+            </thead>
+            <tbody>
+              {commessaRows.map(r => (
+                <tr key={r.code}>
+                  <td style={{ fontFamily: "var(--font-mono)", fontSize: 11, padding: "3px 0" }}>{r.code}</td>
+                  <td style={{ textAlign: "right" }}>{fmtH(r.hours)}</td>
+                </tr>
+              ))}
+              <tr style={{ borderTop: "1px solid var(--border)", fontWeight: 600 }}>
+                <td style={{ padding: "4px 0" }}>Totale mese</td>
+                <td style={{ textAlign: "right" }}>{fmtH(totalRealHours)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div>
+          <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>Avanzamento progetto</div>
+          <div style={rowStyle}><span style={labelStyle}>Ore cumulative</span><span>{fmtH(cumulativeHours)}</span></div>
+          <div style={rowStyle}><span style={labelStyle}>Ore stimate</span><span>{fmtH(estimated)}</span></div>
+          <div style={rowStyle}>
+            <span style={labelStyle}>Avanzamento</span>
+            <span style={{ color: progress > 100 ? "var(--danger)" : "inherit", fontWeight: 600 }}>
+              {fmtNum(Math.min(progress, 999), 1)}%
+            </span>
+          </div>
+          <div style={rowStyle}><span style={labelStyle}>Compenso totale</span><span>{fmtEUR(totalFee)}</span></div>
+        </div>
+      </div>
+      <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid var(--border)", display: "flex", flexWrap: "wrap", gap: 24, fontSize: 12 }}>
+        <div>
+          <span style={labelStyle}>Tariffa stimata: </span>
+          <strong>{fmtEUR(estimatedRate)}/h</strong>
+        </div>
+        <div>
+          <span style={labelStyle}>Tariffa effettiva (a oggi): </span>
+          <strong style={{ color: cumulativeHours > estimated ? "var(--danger)" : "inherit" }}>
+            {fmtEUR(effectiveRate)}/h
+          </strong>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 window.Export = Export;
