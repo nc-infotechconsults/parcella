@@ -58,7 +58,11 @@ const ClientsList = ({ clients, activities, currentMonthKey, onSelect, onAddNew 
               </div>
               <div className="col">
                 <div className="label">{t('client.rate')}</div>
-                <div className="value">{fmtEUR(c.hourlyRate)}/h</div>
+                <div className="value">
+                  {c.billingType === 'monthly' ? `canone ${fmtEUR(c.monthlyRate)}/mese`
+                   : c.billingType === 'project' ? `progetto ${fmtEUR(c.projectFee)}`
+                   : `${fmtEUR(c.hourlyRate)}/h`}
+                </div>
               </div>
               <div className="col">
                 <div className="label">{t('client.plafond')}</div>
@@ -320,8 +324,16 @@ const ClientDetail = ({ client, activities, currentMonthKey, onEdit, onBack, onD
           <div className="card-body">
             <div className="info-grid">
               <div className="info-cell">
-                <div className="label">Tariffa oraria</div>
-                <div className="value mono">{fmtEUR(client.hourlyRate)} /h</div>
+                <div className="label">
+                  {client.billingType === 'monthly' ? 'Canone mensile'
+                   : client.billingType === 'project' ? 'Compenso progetto'
+                   : 'Tariffa oraria'}
+                </div>
+                <div className="value mono">
+                  {client.billingType === 'monthly' ? `${fmtEUR(client.monthlyRate)}/mese`
+                   : client.billingType === 'project' ? fmtEUR(client.projectFee)
+                   : `${fmtEUR(client.hourlyRate)}/h`}
+                </div>
               </div>
               <div className="info-cell">
                 <div className="label">Ore plafond mensile</div>
@@ -360,7 +372,14 @@ const ClientDetail = ({ client, activities, currentMonthKey, onEdit, onBack, onD
               {(() => {
                 const ex = computeInvoiceAmounts(client, 10);
                 return (<>
-                  <div className="calc-row"><span className="label">Imponibile (10h × {fmtEUR(client.hourlyRate)})</span><span>{fmtEUR(ex.imponibile)}</span></div>
+                  <div className="calc-row">
+                    <span className="label">
+                      {client.billingType === 'monthly' ? 'Imponibile (canone mensile)'
+                       : client.billingType === 'project' ? 'Imponibile (acconto progetto)'
+                       : `Imponibile (10h × ${fmtEUR(client.hourlyRate)})`}
+                    </span>
+                    <span>{fmtEUR(ex.imponibile)}</span>
+                  </div>
                   {!client.cassaIncluded && (
                     <div className="calc-row"><span className="label">Cassa {client.cassaPct}%</span><span>{fmtEUR(ex.cassa)}</span></div>
                   )}
@@ -428,7 +447,14 @@ const ClientDetail = ({ client, activities, currentMonthKey, onEdit, onBack, onD
                       </td>
                       <td className="num">{fmtH(cHours)}</td>
                       <td className="num" style={{ color: "var(--text-muted)" }}>{fmtH(allCoHours)}</td>
-                      <td className="num">{fmtEUR(cHours * client.hourlyRate)}</td>
+                      <td className="num">
+                        {client.billingType === 'monthly' || client.billingType === 'project'
+                          ? <span style={{ color: "var(--text-muted)", fontSize: 11 }}>
+                              {client.billingType === 'monthly' ? 'canone' : 'progetto'}
+                            </span>
+                          : fmtEUR(cHours * client.hourlyRate)
+                        }
+                      </td>
                     </tr>
                   );
                 })}
@@ -472,7 +498,14 @@ const ClientDetail = ({ client, activities, currentMonthKey, onEdit, onBack, onD
                         </div>
                       </div>
                       <div className="hours">{fmtH(a.hours)}</div>
-                      <div className="amount">{fmtEUR(a.hours * client.hourlyRate)}</div>
+                      <div className="amount">
+                        {client.billingType === 'monthly' || client.billingType === 'project'
+                          ? <span style={{ color: "var(--text-muted)", fontSize: 11 }}>
+                              {client.billingType === 'monthly' ? 'canone' : 'progetto'}
+                            </span>
+                          : fmtEUR(a.hours * client.hourlyRate)
+                        }
+                      </div>
                     </div>
                   );
                 })}

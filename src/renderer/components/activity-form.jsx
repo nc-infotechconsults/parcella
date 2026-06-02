@@ -39,7 +39,8 @@ const ActivityForm = ({ activity, clients, defaultDay, onSave, onCancel, onDelet
         .filter(d => !data.skipWeekends || ![0, 6].includes(dowOfDay(currentYear, currentMonth, d)))
     : [];
   const totalDays = isRange ? rangeDays.length : 1;
-  const importo = data.hours * totalDays * client.hourlyRate;
+  const isHourly = !client.billingType || client.billingType === 'hourly';
+  const importo = isHourly ? data.hours * totalDays * client.hourlyRate : 0;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
@@ -153,10 +154,15 @@ const ActivityForm = ({ activity, clients, defaultDay, onSave, onCancel, onDelet
         <div className="calc-row">
           <span className="label" style={{ color: "var(--accent-text)" }}>
             <Icon name="euro" size={14} style={{ verticalAlign: "middle", marginRight: 6 }} />
-            {fmtH(data.hours)} × {fmtEUR(client.hourlyRate)}/h{isRange && rangeDays.length > 0 ? ` × ${rangeDays.length}gg` : ""}
+            {isHourly
+              ? `${fmtH(data.hours)} × ${fmtEUR(client.hourlyRate)}/h${isRange && rangeDays.length > 0 ? ` × ${rangeDays.length}gg` : ""}`
+              : client.billingType === 'monthly'
+              ? `canone mensile · ${fmtEUR(client.monthlyRate)}/mese`
+              : `acconto progetto · ${fmtEUR(client.projectFee)}`
+            }
           </span>
           <span style={{ color: "var(--accent-text)", fontWeight: 700, fontSize: 16 }}>
-            {fmtEUR(importo)}
+            {isHourly ? fmtEUR(importo) : <span style={{ color: "var(--text-muted)", fontSize: 12 }}>a canone</span>}
           </span>
         </div>
       </div>

@@ -88,7 +88,13 @@ const Dashboard = ({ clients, activities, currentMonthKey, onNav }) => {
                     <div style={{ fontWeight: 500 }}>{s.client.name}</div>
                     <div style={{ fontSize: 11.5, color: "var(--text-muted)" }}>{s.activitiesCount} attività</div>
                   </td>
-                  <td className="mono">{fmtEUR(s.client.hourlyRate)}/h</td>
+                  <td className="mono">
+                    {s.client.billingType === 'monthly'
+                      ? `canone ${fmtEUR(s.client.monthlyRate)}/mese`
+                      : s.client.billingType === 'project'
+                      ? `progetto ${fmtEUR(s.client.projectFee)}`
+                      : `${fmtEUR(s.client.hourlyRate)}/h`}
+                  </td>
                   <td className="num">{fmtNum(s.hours, 1)}</td>
                   <td className="num">{fmtEUR(s.amounts.imponibile + s.amounts.cassa)}</td>
                   <td className="num"><strong>{fmtEUR(s.amounts.total)}</strong></td>
