@@ -148,6 +148,10 @@ function createWindow() {
     return true;
   });
 
+  ipcMain.handle('db:nextDocNumber',   (_, { year }) => db.nextDocNumber(year));
+  ipcMain.handle('db:getDocCounter',   (_, { year }) => db.getDocCounter(year));
+  ipcMain.handle('db:resetDocCounter', (_, { year }) => { db.resetDocCounter(year); return true; });
+
   ipcMain.handle('db:getInfo', () => {
     const icloud = iCloudPath();
     const dropbox = dropboxPath();
