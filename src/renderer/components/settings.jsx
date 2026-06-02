@@ -7,11 +7,19 @@ const DataBackupTab = ({ onResetData }) => {
   const [showPwForm, setShowPwForm] = useState(false);
   const hasAPI = !!window.api?.db;
 
+  const currentYear = new Date().getFullYear();
+  const [docCounter, setDocCounter] = useState(null);
+
   useEffect(() => {
     if (!hasAPI) return;
     window.api.db.getInfo().then(setInfo);
     window.api.backup.checkCloud().then(setCloud);
     window.api.crypto?.getPassphrase().then(setHasPassphrase);
+  }, []);
+
+  useEffect(() => {
+    if (!hasAPI) return;
+    window.api.db.getDocCounter(currentYear).then(setDocCounter);
   }, []);
 
   const fmt = (b) => b > 1048576 ? (b / 1048576).toFixed(1) + " MB" : (b / 1024).toFixed(0) + " KB";
@@ -205,6 +213,34 @@ const DataBackupTab = ({ onResetData }) => {
           </div>
         </div>
       )}
+
+      <div className="card" style={{ marginTop: 16 }}>
+        <div className="card-header" style={{ padding: "12px 16px" }}>
+          <h3 style={{ fontSize: 12.5 }}>Numerazione documenti</h3>
+        </div>
+        <div className="card-body" style={{ padding: 16 }}>
+          <div style={{ fontSize: 13, marginBottom: 12 }}>
+            Contatore documenti <strong>{currentYear}</strong>:{" "}
+            <span className="mono" style={{ fontWeight: 600 }}>
+              {docCounter === null ? "…" : `${currentYear}-${String(docCounter).padStart(3, "0")} (ultimo emesso)`}
+            </span>
+          </div>
+          <button
+            className="btn btn-danger btn-sm"
+            onClick={async () => {
+              if (!confirm(`Azzerare il contatore documenti per il ${currentYear}? Il prossimo documento sarà ${currentYear}-001.`)) return;
+              await window.api.db.resetDocCounter(currentYear);
+              setDocCounter(0);
+              window.showToast(`✓ Contatore ${currentYear} azzerato`, "success");
+            }}
+          >
+            Reset contatore {currentYear}
+          </button>
+          <div className="hint" style={{ marginTop: 6 }}>
+            Usa solo in caso di errore. I numeri già emessi non vengono riassegnati.
+          </div>
+        </div>
+      </div>
     </div>
   );
 };
