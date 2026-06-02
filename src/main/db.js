@@ -49,7 +49,13 @@ class AppDB {
     const expenses   = this.db.prepare('SELECT data FROM expenses ORDER BY month_key, ts').all().map(r => JSON.parse(r.data));
     const studio     = this._getKV('studio');
     const fiscal     = this._getKV('fiscal');
-    return { clients, activities, expenses, studio, fiscal, empty: clients.length === 0 && !studio };
+    const docCounters = {};
+    const counterRows = this.db.prepare("SELECT key, value FROM kv WHERE key LIKE 'docCounter_%'").all();
+    for (const row of counterRows) {
+      const year = row.key.replace('docCounter_', '');
+      docCounters[year] = Number(JSON.parse(row.value)) || 0;
+    }
+    return { clients, activities, expenses, studio, fiscal, docCounters, empty: clients.length === 0 && !studio };
   }
 
   _getKV(key) {
@@ -121,6 +127,11 @@ class AppDB {
       if (data.expenses)   this.saveCollection('expenses', data.expenses);
       if (data.studio)     this._setKV('studio', data.studio);
       if (data.fiscal)     this._setKV('fiscal', data.fiscal);
+      if (data.docCounters) {
+        for (const [year, count] of Object.entries(data.docCounters)) {
+          this._setKV(`docCounter_${year}`, count);
+        }
+      }
     })();
   }
 
