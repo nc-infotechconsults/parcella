@@ -12,8 +12,8 @@ function downloadTimesheetCSV(acts, clients, year, month) {
         a.commessa,
         a.desc,
         a.hours,
-        c ? c.hourlyRate : "",
-        c ? (a.hours * c.hourlyRate).toFixed(2) : "",
+        c ? (c.billingType === 'monthly' || c.billingType === 'project' ? '' : c.hourlyRate) : "",
+        c ? (c.billingType === 'monthly' || c.billingType === 'project' ? '' : (a.hours * c.hourlyRate).toFixed(2)) : "",
       ];
     }),
   ];
@@ -89,8 +89,7 @@ const Timesheet = ({ clients, activities, currentYear, currentMonth, onNavMonth,
 
   const grandTotal = Object.values(rowTotals).reduce((s, v) => s + v, 0);
   const grandAmount = rows.reduce((s, r) => {
-    if (r.client.billingType === 'monthly') return s;
-    if (r.client.billingType === 'project') return s;
+    if (r.client.billingType === 'monthly' || r.client.billingType === 'project') return s;
     return s + rowTotals[r.key] * r.client.hourlyRate;
   }, 0);
 
@@ -199,7 +198,7 @@ const Timesheet = ({ clients, activities, currentYear, currentMonth, onNavMonth,
                 </div>
                 <div className="ts-cell" style={{ justifyContent: "flex-end", paddingRight: 14, fontFamily: "var(--font-mono)", fontWeight: 500, fontSize: 12.5 }}>
                   {r.client.billingType === 'monthly' || r.client.billingType === 'project'
-                    ? <span style={{ color: "var(--text-muted)", fontSize: 11 }}>canone</span>
+                    ? <span style={{ color: "var(--text-muted)", fontSize: 11 }}>{r.client.billingType === 'monthly' ? 'canone' : 'progetto'}</span>
                     : fmtEUR(rowTotals[r.key] * r.client.hourlyRate)
                   }
                 </div>
@@ -312,7 +311,12 @@ const Timesheet = ({ clients, activities, currentYear, currentMonth, onNavMonth,
                         </td>
                         <td style={{ color: "var(--text-secondary)" }}>{a.desc}</td>
                         <td className="num"><strong>{fmtH(a.hours)}</strong></td>
-                        <td className="num">{fmtEUR(a.hours * c.hourlyRate)}</td>
+                        <td className="num">
+                          {c.billingType === 'monthly' || c.billingType === 'project'
+                            ? <span style={{ color: "var(--text-muted)", fontSize: 11 }}>{c.billingType === 'monthly' ? 'canone' : 'progetto'}</span>
+                            : fmtEUR(a.hours * c.hourlyRate)
+                          }
+                        </td>
                         <td>
                           <button className="btn btn-ghost btn-sm btn-icon" onClick={e => { e.stopPropagation(); onEditActivity(a); }}>
                             <Icon name="edit" size={12} />
