@@ -10,30 +10,58 @@ function computeTaxes(activities, expenses, fiscal, year, clients, studio) {
   const yearAct = activities.filter(a => a.monthKey.startsWith(yr + "-"));
   const yearExp = expenses.filter(e => e.monthKey.startsWith(yr + "-"));
 
-  // ── Ricavi ────────────────────────────────────────────────────────────────
-  const compensi = yearAct.reduce((s, a) => {
-    const c = _clients.find(x => x.id === a.clientId);
-    return s + (c ? a.hours * c.hourlyRate : 0);
-  }, 0);
+  // For non-hourly clients, pre-compute one billing entry per (clientId, monthKey).
+  // This prevents monthly/project rates from being summed per-activity instead of per-month.
+  const nonHourlyMonthBillings = (() => {
+    const seen = new Set();
+    const result = [];
+    for (const a of yearAct) {
+      const c = _clients.find(x => x.id === a.clientId);
+      if (!c || !c.billingType || c.billingType === 'hourly') continue;
+      const key = `${a.clientId}::${a.monthKey}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const totalHours = yearAct
+        .filter(x => x.clientId === a.clientId && x.monthKey === a.monthKey)
+        .reduce((s, x) => s + x.hours, 0);
+      result.push({ c, monthKey: a.monthKey, ...computeInvoiceAmounts(c, totalHours) });
+    }
+    return result;
+  })();
 
-  const ritenutaTrattenuta = yearAct.reduce((s, a) => {
-    const c = _clients.find(x => x.id === a.clientId);
-    if (!c || !c.withholding) return s;
-    return s + a.hours * c.hourlyRate * 0.20;
-  }, 0);
-  const compensiConRit = yearAct.reduce((s, a) => {
-    const c = _clients.find(x => x.id === a.clientId);
-    if (!c || !c.withholding) return s;
-    return s + a.hours * c.hourlyRate;
-  }, 0);
+  // ── Ricavi ────────────────────────────────────────────────────────────────
+  const compensi =
+    yearAct.reduce((s, a) => {
+      const c = _clients.find(x => x.id === a.clientId);
+      if (!c || (c.billingType && c.billingType !== 'hourly')) return s;
+      return s + a.hours * c.hourlyRate;
+    }, 0) +
+    nonHourlyMonthBillings.reduce((s, b) => s + b.imponibile, 0);
+
+  const ritenutaTrattenuta =
+    yearAct.reduce((s, a) => {
+      const c = _clients.find(x => x.id === a.clientId);
+      if (!c || !c.withholding || (c.billingType && c.billingType !== 'hourly')) return s;
+      return s + a.hours * c.hourlyRate * 0.20;
+    }, 0) +
+    nonHourlyMonthBillings.filter(b => b.c.withholding).reduce((s, b) => s + b.withholding, 0);
+  const compensiConRit =
+    yearAct.reduce((s, a) => {
+      const c = _clients.find(x => x.id === a.clientId);
+      if (!c || !c.withholding || (c.billingType && c.billingType !== 'hourly')) return s;
+      return s + a.hours * c.hourlyRate;
+    }, 0) +
+    nonHourlyMonthBillings.filter(b => b.c.withholding).reduce((s, b) => s + b.imponibile, 0);
   const compensiSenzaRit = compensi - compensiConRit;
 
   // ── IVA ───────────────────────────────────────────────────────────────────
-  const ivaDebito = yearAct.reduce((s, a) => {
-    const c = _clients.find(x => x.id === a.clientId);
-    if (!c) return s;
-    return s + a.hours * c.hourlyRate * (c.vatPct || 0) / 100;
-  }, 0);
+  const ivaDebito =
+    yearAct.reduce((s, a) => {
+      const c = _clients.find(x => x.id === a.clientId);
+      if (!c || (c.billingType && c.billingType !== 'hourly')) return s;
+      return s + a.hours * c.hourlyRate * (c.vatPct || 0) / 100;
+    }, 0) +
+    nonHourlyMonthBillings.reduce((s, b) => s + b.iva, 0);
   const ivaCredito = yearExp.filter(e => !e.billable).reduce((s, e) => s + computeExpenseFiscals(e).vatDetracted, 0);
 
   // ── Costi deducibili ──────────────────────────────────────────────────────
@@ -86,18 +114,26 @@ function computeTaxes(activities, expenses, fiscal, year, clients, studio) {
     { id: "Q4", label: "4° trim (ott-dic)", deadline: "16 marzo anno succ.", months: ["10","11","12"], paid: fiscal.ivaQ4Paid },
   ];
   const trimestri = ivaDeadlines.map(qt => {
-    const debit = yearAct.filter(a => qt.months.includes(a.monthKey.split("-")[1])).reduce((s, a) => {
-      const c = _clients.find(x => x.id === a.clientId);
-      if (!c) return s;
-      return s + a.hours * c.hourlyRate * (c.vatPct || 0) / 100;
-    }, 0);
+    const debit =
+      yearAct.filter(a => qt.months.includes(a.monthKey.split("-")[1])).reduce((s, a) => {
+        const c = _clients.find(x => x.id === a.clientId);
+        if (!c || (c.billingType && c.billingType !== 'hourly')) return s;
+        return s + a.hours * c.hourlyRate * (c.vatPct || 0) / 100;
+      }, 0) +
+      nonHourlyMonthBillings
+        .filter(b => qt.months.includes(b.monthKey.split("-")[1]))
+        .reduce((s, b) => s + b.iva, 0);
     const credit = yearExp.filter(e => !e.billable && qt.months.includes(e.monthKey.split("-")[1]))
       .reduce((s, e) => s + computeExpenseFiscals(e).vatDetracted, 0);
-    const wh = yearAct.filter(a => qt.months.includes(a.monthKey.split("-")[1])).reduce((s, a) => {
-      const c = _clients.find(x => x.id === a.clientId);
-      if (!c || !c.withholding) return s;
-      return s + a.hours * c.hourlyRate * 0.20;
-    }, 0);
+    const wh =
+      yearAct.filter(a => qt.months.includes(a.monthKey.split("-")[1])).reduce((s, a) => {
+        const c = _clients.find(x => x.id === a.clientId);
+        if (!c || !c.withholding || (c.billingType && c.billingType !== 'hourly')) return s;
+        return s + a.hours * c.hourlyRate * 0.20;
+      }, 0) +
+      nonHourlyMonthBillings
+        .filter(b => b.c.withholding && qt.months.includes(b.monthKey.split("-")[1]))
+        .reduce((s, b) => s + b.withholding, 0);
     return { ...qt, debit, credit, balance: debit - credit, withholding: wh };
   });
 
