@@ -811,19 +811,13 @@ const WordPreview = ({ client, acts, totalHours, amounts, docNum, docDate, user,
   </div>
 );
 
+const MAX_DISPLAYED_PCT = 999;
+
 const ReconciliationPanel = ({ client, acts, allActivities }) => {
   if (!client || (client.billingType !== 'monthly' && client.billingType !== 'project')) return null;
 
   const totalRealHours = acts.reduce((s, a) => s + a.hours, 0);
-  const byCommessa = {};
-  acts.forEach(a => {
-    if (!byCommessa[a.commessa]) {
-      const co = client.commesse.find(c => c.code === a.commessa);
-      byCommessa[a.commessa] = { code: a.commessa, name: co?.name || a.commessa, hours: 0 };
-    }
-    byCommessa[a.commessa].hours += a.hours;
-  });
-  const commessaRows = Object.values(byCommessa);
+  const commessaRows = buildSummaryRows(client, acts);
 
   const panelStyle = {
     marginTop: 16, padding: 16,
@@ -839,7 +833,7 @@ const ReconciliationPanel = ({ client, acts, allActivities }) => {
     const effectiveRate = totalRealHours > 0 ? fee / totalRealHours : 0;
     const contractedRate = contracted > 0 ? fee / contracted : 0;
     const utilization = contracted > 0 ? (totalRealHours / contracted) * 100 : 0;
-    const indicatorColor = utilization > 110 ? "var(--danger)" : utilization > 90 ? "#a16207" : "oklch(0.45 0.14 145)";
+    const indicatorColor = utilization > 110 ? "var(--danger)" : utilization > 90 ? "var(--warning)" : "oklch(0.45 0.14 145)";
 
     return (
       <div style={panelStyle}>
@@ -882,7 +876,7 @@ const ReconciliationPanel = ({ client, acts, allActivities }) => {
             <div style={rowStyle}>
               <span style={labelStyle}>Delta</span>
               <span style={{ color: totalRealHours > contracted ? "var(--danger)" : "inherit" }}>
-                {totalRealHours >= contracted ? "+" : ""}{fmtH(totalRealHours - contracted)}
+                {totalRealHours > contracted ? "+" : ""}{fmtH(totalRealHours - contracted)}
               </span>
             </div>
             <div style={rowStyle}>
@@ -954,7 +948,7 @@ const ReconciliationPanel = ({ client, acts, allActivities }) => {
           <div style={rowStyle}>
             <span style={labelStyle}>Avanzamento</span>
             <span style={{ color: progress > 100 ? "var(--danger)" : "inherit", fontWeight: 600 }}>
-              {fmtNum(Math.min(progress, 999), 1)}%
+              {fmtNum(Math.min(progress, MAX_DISPLAYED_PCT), 1)}%
             </span>
           </div>
           <div style={rowStyle}><span style={labelStyle}>Compenso totale</span><span>{fmtEUR(totalFee)}</span></div>
