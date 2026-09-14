@@ -68,6 +68,48 @@ test('an already-imported document is marked, not re-proposed', () => {
   assert.equal(m.counts.giaImportate, 1);
 });
 
+test('an already-imported document is never materialized again, whatever the decision says', () => {
+  // P1: the AdE export folder accumulates, so the normal monthly rescan
+  // re-presents every past document. Re-committing one would reset settlement,
+  // clientId, linkedMonthKey, notes and fiscal back to fresh proposals, which
+  // drops settled revenue from the cash figures and re-opens the timesheet
+  // forecast for that month. accept:true must not be enough.
+  const m = buildManifest(base({
+    files: [file('autofattura-td18-signed.xml')],
+    existing: { dedupKeys: ['IE1111111AA|TD18|28/AU|2026-08-24'], hashes: [] },
+  }));
+  assert.equal(m.items[0].status, 'imported');
+
+  const { records } = finalizeRecords({
+    items: m.items,
+    decisions: { [m.items[0].id]: { accept: true, settlement: { status: 'open', date: null } } },
+    supplierRules: {},
+  });
+  assert.equal(records.length, 0);
+});
+
+test('an active invoice with no matching client is routed to review, not pre-accepted', () => {
+  // coveredMonths in fiscal.js is keyed clientId|linkedMonthKey and skips a null
+  // clientId, so an unlinked active invoice leaves the timesheet forecast for its
+  // month standing next to it: the same work is counted twice. The client form
+  // makes P.IVA optional, so proposeClient returning null is the normal case.
+  const m = buildManifest(base({
+    files: [file('attiva-td01-ritenuta-cassa.xml')],
+    clients: [],
+  }));
+  const it = m.items[0];
+  assert.equal(it.direction, 'active');
+  assert.equal(it.proposal.clientId, null);
+  assert.equal(it.needsReview, true);
+  assert.match(it.reviewReason, /due volte i ricavi/);
+  assert.equal(m.counts.daRivedere, 1);
+
+  // With the client on file it stays a plain "nuova".
+  const ok = buildManifest(base({ files: [file('attiva-td01-ritenuta-cassa.xml')] }));
+  assert.equal(ok.items[0].needsReview, false);
+  assert.equal(ok.items[0].reviewReason, null);
+});
+
 test('a cespite above the threshold is proposed with amortization', () => {
   const m = buildManifest(base({ files: [file('attiva-td01-ritenuta-cassa.xml')] }));
   // active invoices carry no fiscal proposal

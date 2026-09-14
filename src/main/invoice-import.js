@@ -119,6 +119,24 @@ function buildManifest({ files, existing, clients, supplierRules, studioIds }) {
 
         const alreadyImported = importedKeys.has(key) || importedHashes.has(hash);
         const client = cls.direction === 'active' ? proposeClient(cls.counterparty, clients) : null;
+        const linkedMonthKey = cls.direction === 'active' ? (doc.monthKey || null) : null;
+
+        // An unlinked active invoice is the one shape that DOUBLE COUNTS revenue:
+        // coveredMonths in fiscal.js is keyed clientId|linkedMonthKey and skips a
+        // null clientId, so the timesheet forecast for that month survives next to
+        // the invoice. proposeClient only matches on P.IVA/CF, and the client form
+        // makes P.IVA optional — so this is the normal case, not an edge one.
+        // Routing it to "da rivedere" keeps it out of the pre-selected group.
+        let needsReview = cls.needsReview;
+        let reviewReason = cls.reviewReason;
+        if (cls.direction === 'active' && (!client || !linkedMonthKey)) {
+          needsReview = true;
+          // Append rather than overwrite, matching how classify accumulates reasons.
+          reviewReason = [reviewReason, !client
+            ? 'Nessun cliente corrispondente: collega la fattura per non contare due volte i ricavi'
+            : 'Mese timesheet mancante: indicalo per non contare due volte i ricavi']
+            .filter(Boolean).join('; ');
+        }
 
         items.push({
           id: `inv_${hash.slice(0, 12)}_${doc.bodyIndex}`,
@@ -130,12 +148,12 @@ function buildManifest({ files, existing, clients, supplierRules, studioIds }) {
           reverseCharge: cls.reverseCharge,
           counterparty: cls.counterparty,
           tipoDocLabel: cls.tipoDocLabel,
-          needsReview: cls.needsReview,
-          reviewReason: cls.reviewReason,
+          needsReview,
+          reviewReason,
           proposal: {
             clientId: client ? client.id : null,
             clientName: client ? client.name : null,
-            linkedMonthKey: cls.direction === 'active' ? doc.monthKey : null,
+            linkedMonthKey,
             fiscal: cls.direction === 'passive' ? proposeFiscal(doc, cls.counterparty, supplierRules) : null,
             settlement: {
               status: 'open',
@@ -168,7 +186,13 @@ function finalizeRecords({ items, decisions, supplierRules }) {
 
   for (const item of items || []) {
     const d = (decisions || {})[item.id];
-    if (!d || !d.accept) continue;
+    // P1: a document already in the ledger is never rewritten by a re-import,
+    // whatever the decision says. The AdE export folder accumulates, so the
+    // normal monthly rescan re-presents every past document; materializing one
+    // again would reset settlement, clientId, linkedMonthKey, notes and fiscal
+    // back to fresh proposals and silently drop settled revenue from the cash
+    // figures. The UI also disables those checkboxes — this is the backstop.
+    if (!d || !d.accept || item.status === 'imported') continue;
 
     const doc = item.doc;
     const fiscal = d.fiscal !== undefined && d.fiscal !== null ? d.fiscal : item.proposal.fiscal;

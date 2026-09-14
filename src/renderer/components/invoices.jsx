@@ -10,7 +10,7 @@ const InvoiceBadges = ({ inv }) => (
   </>
 );
 
-const Invoices = ({ invoices, clients, currentYear, onImport, onEdit, onDelete }) => {
+const Invoices = ({ invoices, clients, expenses, fiscal, currentYear, onImport, onEdit, onDelete }) => {
   const [tab, setTab] = useState("active");
   const [yearFilter, setYearFilter] = useState(String(currentYear));
   const [periodFilter, setPeriodFilter] = useState("all");
@@ -25,9 +25,12 @@ const Invoices = ({ invoices, clients, currentYear, onImport, onEdit, onDelete }
   const list = tab === "active" ? active : passive;
 
   const sum = (rows, pick) => rows.reduce((s, i) => s + (i.sign || 1) * pick(i), 0);
+  // Same inputs as Tasse, or the two screens would print two different numbers
+  // under the same label: the engine folds manual-expense VAT into ivaCredito,
+  // and the liquidation profile decides how the periods are cut. The F24 is paid
+  // from the Tasse figures, so this screen has to agree with them.
   const fy = window.computeFiscalYear({
-    year: Number(yearFilter), invoices, clients,
-    fiscal: { ivaLiquidazione: "trimestrale" },
+    year: Number(yearFilter), invoices, clients, expenses, fiscal,
   });
 
   return (
@@ -143,8 +146,16 @@ const Invoices = ({ invoices, clients, currentYear, onImport, onEdit, onDelete }
                       : <span className="badge badge-dot">{inv.direction === "active" ? t('inv.open') : t('inv.openPassive')}</span>}
                   </td>
                   <td>
+                    {/* An imported invoice is an accounting record: removing it
+                        takes its revenue and its IVA out of every declared figure
+                        with no undo, and the × sits inside a clickable row. */}
                     <button className="btn btn-ghost btn-sm btn-icon"
-                      onClick={ev => { ev.stopPropagation(); onDelete(inv.id); }}>×</button>
+                      onClick={ev => {
+                        ev.stopPropagation();
+                        if (confirm(t('inv.deleteConfirm', { number: inv.number }))) {
+                          onDelete(inv.id);
+                        }
+                      }}>×</button>
                   </td>
                 </tr>
               ))}
@@ -179,6 +190,22 @@ const InvoiceDrawer = ({ invoice, clients, onSave, onClose }) => {
   const setFiscal = patch => setEdit(e => ({ ...e, fiscal: { ...e.fiscal, ...patch } }));
   const rule = edit.fiscal ? window.CATEGORY_RULES[edit.fiscal.category] : null;
 
+  // Status and date are one fact, not two fields. fiscal.js places ricavi and
+  // costi by settlement date (P4), so "saldata" without a date deducts nothing
+  // and also leaves the still-to-pay list: the amount would vanish from both
+  // sides with nothing on screen saying so.
+  const missingSettlementDate = edit.settlement.status === "settled" && !edit.settlement.date;
+  const setStatus = status => setEdit(x => ({
+    ...x,
+    settlement: {
+      ...x.settlement,
+      status,
+      date: status === "settled" && !x.settlement.date
+        ? new Date().toISOString().slice(0, 10)
+        : x.settlement.date,
+    },
+  }));
+
   const save = () => onSave({
     ...invoice,
     clientId: edit.clientId || null,
@@ -194,7 +221,7 @@ const InvoiceDrawer = ({ invoice, clients, onSave, onClose }) => {
       title={`${invoice.number} — ${invoice.counterparty.name}`}
       footer={<>
         <button className="btn" onClick={onClose}>{t('action.cancel')}</button>
-        <button className="btn btn-primary" onClick={save}>{t('action.save')}</button>
+        <button className="btn btn-primary" disabled={missingSettlementDate} onClick={save}>{t('action.save')}</button>
       </>}>
 
       {/* P1 is a visual promise, not only a code one: the immutable block gets a
@@ -291,7 +318,7 @@ const InvoiceDrawer = ({ invoice, clients, onSave, onClose }) => {
         <div className="field">
           <label>{t('inv.status')}</label>
           <select className="select" value={edit.settlement.status}
-            onChange={e => setEdit(x => ({ ...x, settlement: { ...x.settlement, status: e.target.value } }))}>
+            onChange={e => setStatus(e.target.value)}>
             <option value="open">{invoice.direction === "active" ? t('inv.open') : t('inv.openPassive')}</option>
             <option value="settled">{invoice.direction === "active" ? t('inv.settled') : t('inv.settledPassive')}</option>
           </select>
@@ -300,6 +327,7 @@ const InvoiceDrawer = ({ invoice, clients, onSave, onClose }) => {
           <label>{t('inv.settlementDate')}</label>
           <input type="date" className="input mono" value={edit.settlement.date || ""}
             onChange={e => setEdit(x => ({ ...x, settlement: { ...x.settlement, date: e.target.value || null } }))} />
+          {missingSettlementDate && <div className="hint" style={{ color: "var(--danger)" }}>{t('inv.settlementDateRequired')}</div>}
         </div>
 
         <div className="field full">

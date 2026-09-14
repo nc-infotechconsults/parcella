@@ -279,18 +279,21 @@ const App = () => {
   };
 
   const handleDeleteInvoice = (id) => {
+    // The confirmation lives in the view, next to the button, exactly as
+    // ClientDetail does it.
     setInvoices(list => list.filter(i => i.id !== id));
     window.showToast('Fattura rimossa', 'info');
   };
 
   const handleImported = ({ records, supplierRules: rules }) => {
-    setInvoices(list => {
-      const byId = new Map(list.map(i => [i.id, i]));
-      records.forEach(r => byId.set(r.id, r));
-      return Array.from(byId.values());
-    });
+    // Never overwrite a record already in the ledger: what is stored carries the
+    // user's edited settlement, client link, notes and fiscal treatment, while
+    // `r` is a fresh proposal rebuilt from the XML (P1).
+    const known = new Set(invoices.map(i => i.id));
+    const fresh = records.filter(r => !known.has(r.id));
+    if (fresh.length) setInvoices(list => [...list, ...fresh]);
     if (rules) setSupplierRules(rules);
-    window.showToast(t('imp.done', { n: records.length }), 'success');
+    window.showToast(t('imp.done', { n: fresh.length }), 'success');
   };
 
   const handleResetData = () => {
@@ -370,7 +373,8 @@ const App = () => {
             onAdd={billable => setEditingExpense({ __billable: billable })} onEdit={e => setEditingExpense(e)}
             onDelete={handleDeleteExpense} />}
           {view === "invoices" && <Invoices
-            invoices={invoices} clients={clients} currentYear={year}
+            invoices={invoices} clients={clients} expenses={expenses}
+            fiscal={fiscal || window.APP_DATA.fiscal} currentYear={year}
             onImport={() => setImportOpen(true)}
             onEdit={setEditingInvoice} onDelete={handleDeleteInvoice} />}
           {view === "settings" && <Settings user={s} onSave={d => setStudio(d)} onResetData={handleResetData} />}

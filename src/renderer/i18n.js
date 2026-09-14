@@ -64,6 +64,8 @@
       'inv.summaryRow': 'Riepilogo',
       'inv.settlementDate': 'Data saldo',
       'inv.notes': 'Note',
+      'inv.settlementDateRequired': 'Indica la data di saldo: senza data il costo non viene dedotto e la fattura resta tra quelle da saldare.',
+      'inv.deleteConfirm': 'Eliminare la fattura {number}? Ricavi, costi e IVA di questo documento spariranno da tutti i conteggi. L\'operazione non è reversibile.',
 
       // Import wizard
       'imp.title': 'Importa fatture elettroniche',
@@ -73,6 +75,7 @@
       'imp.new': 'Nuove',
       'imp.duplicates': 'Duplicati nel batch',
       'imp.already': 'Già importate',
+      'imp.alreadyHint': 'Documenti già presenti: non vengono reimportati, per non sovrascrivere le modifiche fatte.',
       'imp.toReview': 'Da rivedere',
       'imp.discarded': 'Scartate',
       'imp.selectAll': 'Seleziona tutte',
@@ -274,7 +277,7 @@
       'exp.irpefDeductible': 'Costo deducibile IRPEF (anno)',
       'exp.irpefDeductibleSub': 'cespiti rateizzati su più esercizi',
       'exp.billableNote': 'Le spese rimborsabili vengono incluse automaticamente nel rapporto del cliente.',
-      'exp.invoiceHint': 'I costi documentati da fattura elettronica si gestiscono in Fatture.',
+      'exp.invoiceHint': 'Non registrare qui i costi già documentati da fattura elettronica: sono già conteggiati in Fatture.',
       // Expense form
       'ef.category': 'Categoria',
       'ef.day': 'Giorno',
@@ -504,6 +507,8 @@
       'inv.summaryRow': 'Summary',
       'inv.settlementDate': 'Settlement date',
       'inv.notes': 'Notes',
+      'inv.settlementDateRequired': 'Set the settlement date: without one the cost is not deducted and the invoice stays in the still-to-settle list.',
+      'inv.deleteConfirm': 'Delete invoice {number}? Its revenue, costs and VAT will disappear from every figure. This cannot be undone.',
 
       // Import wizard
       'imp.title': 'Import e-invoices',
@@ -513,6 +518,7 @@
       'imp.new': 'New',
       'imp.duplicates': 'Duplicates in batch',
       'imp.already': 'Already imported',
+      'imp.alreadyHint': 'Already in the ledger: these are not re-imported, so your edits are not overwritten.',
       'imp.toReview': 'To review',
       'imp.discarded': 'Skipped',
       'imp.selectAll': 'Select all',
@@ -714,7 +720,7 @@
       'exp.irpefDeductible': 'Tax-deductible cost (year)',
       'exp.irpefDeductibleSub': 'assets depreciated over multiple years',
       'exp.billableNote': 'Reimbursable expenses are automatically included in the client report.',
-      'exp.invoiceHint': 'Costs backed by an e-invoice are managed in Invoices.',
+      'exp.invoiceHint': 'Do not record costs here if an e-invoice already documents them — those are already counted in Invoices.',
       // Expense form
       'ef.category': 'Category',
       'ef.day': 'Day',

@@ -105,9 +105,15 @@ const InvoiceImportWizard = ({ open, onClose, onImported }) => {
             <div className="card" key={g.key} style={{ marginTop: 16 }}>
               <div className="card-header">
                 <strong>{g.label}</strong>
-                <button className="btn btn-ghost btn-sm" onClick={() =>
-                  g.rows.forEach(r => setDecision(r.id, { accept: true }))}>{t('imp.selectAll')}</button>
+                {/* No select-all on "già importate": those documents are already in
+                    the ledger and re-importing one would reset the classification
+                    the user has since edited (P1). */}
+                {g.key !== 'already' && (
+                  <button className="btn btn-ghost btn-sm" onClick={() =>
+                    g.rows.forEach(r => setDecision(r.id, { accept: true }))}>{t('imp.selectAll')}</button>
+                )}
               </div>
+              {g.key === 'already' && <div className="hint" style={{ padding: '0 16px 8px' }}>{t('imp.alreadyHint')}</div>}
               <table className="data">
                 <thead>
                   <tr>
@@ -125,6 +131,8 @@ const InvoiceImportWizard = ({ open, onClose, onImported }) => {
                     return (
                       <tr key={it.id}>
                         <td><input type="checkbox" checked={!!d.accept}
+                          disabled={it.status === 'imported'}
+                          title={it.status === 'imported' ? t('imp.alreadyHint') : undefined}
                           onChange={e => setDecision(it.id, { accept: e.target.checked })} /></td>
                         <td className="mono">{it.doc.date}</td>
                         <td>
