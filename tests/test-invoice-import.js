@@ -1,0 +1,136 @@
+// tests/test-invoice-import.js
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const { buildManifest, finalizeRecords } = require('../src/main/invoice-import');
+const fixtures = require('./fixtures');
+
+const near = (a, b, tol = 0.011) => assert.ok(Math.abs(a - b) < tol, `${a} != ${b}`);
+
+const STUDIO = [fixtures.STUDIO.piva, fixtures.STUDIO.cf];
+
+const file = name => ({ sourcePath: `/tmp/${name}`, name, buffer: Buffer.from(fixtures.read(name), 'utf-8') });
+
+const CLIENTS = [
+  { id: 'c1', name: 'Cliente Alfa', piva: 'IT09876543210' },
+  { id: 'c2', name: 'Altro Cliente', piva: 'IT11111111111' },
+];
+
+const base = (over = {}) => ({
+  files: [], existing: { dedupKeys: [], hashes: [] }, clients: CLIENTS,
+  supplierRules: {}, studioIds: STUDIO, ...over,
+});
+
+test('an active invoice proposes the matching client and its month', () => {
+  const m = buildManifest(base({ files: [file('attiva-td01-ritenuta-cassa.xml')] }));
+  assert.equal(m.items.length, 1);
+  const it = m.items[0];
+  assert.equal(it.direction, 'active');
+  assert.equal(it.status, 'new');
+  assert.equal(it.proposal.clientId, 'c1');
+  assert.equal(it.proposal.linkedMonthKey, '2026-07');
+  near(it.proposal.settlement.amount, 7612.80);
+});
+
+test('a passive invoice proposes a category from its lines', () => {
+  const m = buildManifest(base({ files: [file('passiva-td01-multirate.xml')] }));
+  const it = m.items[0];
+  assert.equal(it.direction, 'passive');
+  assert.equal(it.proposal.clientId, null);
+  assert.equal(it.proposal.fiscal.category, 'Auto');       // "Totale soste"
+  assert.equal(it.proposal.fiscal.deductPct, 20);
+});
+
+test('a remembered supplier rule wins over the keyword guess', () => {
+  const m = buildManifest(base({
+    files: [file('passiva-td01-multirate.xml')],
+    supplierRules: { '05550001112': { category: 'Trasferta', deductPct: 100, vatDetractPct: 100, amortize: false } },
+  }));
+  assert.equal(m.items[0].proposal.fiscal.category, 'Trasferta');
+  assert.equal(m.items[0].proposal.fiscal.deductPct, 100);
+});
+
+test('the same self-invoice in both exports collapses to one item', () => {
+  const m = buildManifest(base({
+    files: [file('autofattura-td18-signed.xml'), file('COPIA_autofattura-td18-signed.xml')],
+  }));
+  assert.equal(m.items.length, 1);
+  assert.equal(m.items[0].direction, 'passive');
+  assert.equal(m.items[0].reverseCharge, true);
+  assert.equal(m.counts.duplicati, 1);
+});
+
+test('an already-imported document is marked, not re-proposed', () => {
+  const m = buildManifest(base({
+    files: [file('autofattura-td18-signed.xml')],
+    existing: { dedupKeys: ['IE1111111AA|TD18|28/AU|2026-08-24'], hashes: [] },
+  }));
+  assert.equal(m.items[0].status, 'imported');
+  assert.equal(m.counts.giaImportate, 1);
+});
+
+test('a cespite above the threshold is proposed with amortization', () => {
+  const m = buildManifest(base({ files: [file('attiva-td01-ritenuta-cassa.xml')] }));
+  // active invoices carry no fiscal proposal
+  assert.equal(m.items[0].proposal.fiscal, null);
+
+  const hw = buildManifest(base({
+    files: [{
+      sourcePath: '/tmp/hw.xml', name: 'hw.xml',
+      buffer: Buffer.from(fixtures.read('passiva-td01-multirate.xml')
+        .replace('Totale soste (IVA 22.00)', 'MacBook Pro 14 notebook')
+        .replace('Canone abbonamento (IVA 22.00)', 'Alimentatore notebook')
+        .replace('<ImponibileImporto>5.50</ImponibileImporto>', '<ImponibileImporto>2499.00</ImponibileImporto>'), 'utf-8'),
+    }],
+  }));
+  assert.equal(hw.items[0].proposal.fiscal.category, 'Hardware');
+  assert.equal(hw.items[0].proposal.fiscal.amortize, true);
+  assert.equal(hw.items[0].proposal.fiscal.amortYears, 4);
+  assert.equal(hw.items[0].proposal.fiscal.firstYearHalf, true);
+});
+
+test('unreadable files are skipped with a reason, not fatal', () => {
+  const m = buildManifest(base({
+    files: [
+      { sourcePath: '/tmp/bad.xml', name: 'bad.xml', buffer: Buffer.from('<?xml version="1.0"?><nope/>', 'utf-8') },
+      file('passiva-td04-nota-credito.xml'),
+    ],
+  }));
+  assert.equal(m.skipped.length, 1);
+  assert.equal(m.skipped[0].file, 'bad.xml');
+  assert.match(m.skipped[0].reason, /FatturaElettronica/);
+  assert.equal(m.items.length, 1);
+});
+
+test('finalizeRecords builds records only for accepted items and remembers suppliers', () => {
+  const m = buildManifest(base({ files: [file('passiva-td01-multirate.xml'), file('passiva-td04-nota-credito.xml')] }));
+  const [a, b] = m.items;
+  const { records, supplierRules } = finalizeRecords({
+    items: m.items,
+    decisions: {
+      [a.id]: { accept: true, fiscal: { category: 'Utenze', deductPct: 100, vatDetractPct: 100, amortize: false }, rememberSupplier: true },
+      [b.id]: { accept: false },
+    },
+    supplierRules: {},
+  });
+  assert.equal(records.length, 1);
+  assert.equal(records[0].fiscal.category, 'Utenze');
+  assert.equal(records[0].direction, 'passive');
+  assert.equal(records[0].reviewedAt > 0, true);
+  assert.equal(records[0].settlement.status, 'open');
+  assert.equal(supplierRules['05550001112'].category, 'Utenze');
+});
+
+test('a TD04 record keeps sign -1 so it subtracts downstream', () => {
+  const m = buildManifest(base({ files: [file('passiva-td04-nota-credito.xml')] }));
+  const { records } = finalizeRecords({
+    items: m.items,
+    decisions: { [m.items[0].id]: { accept: true } },
+    supplierRules: {},
+  });
+  assert.equal(records[0].sign, -1);
+  assert.equal(records[0].tipoDoc, 'TD04');
+});
+
+test('buildManifest refuses to run without the studio identity', () => {
+  assert.throws(() => buildManifest(base({ files: [file('passiva-td04-nota-credito.xml')], studioIds: [] })), /studioIds/);
+});
