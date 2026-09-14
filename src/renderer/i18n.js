@@ -138,6 +138,10 @@
       'dash.vsLastMonth': 'vs mese precedente',
       'dash.activeInMonth': 'clienti attivi nel mese',
       'dash.outOf': 'su {n} totali',
+      'dash.invoicedYTD': 'Ricavi fatturati YTD',
+      'dash.toCollect': 'Da incassare',
+      'dash.costsByCategory': 'Costi per categoria',
+      'dash.upcoming': 'Prossime scadenze',
 
       // Clients
       'client.new': 'Nuovo cliente',
@@ -269,6 +273,7 @@
       'exp.irpefDeductible': 'Costo deducibile IRPEF (anno)',
       'exp.irpefDeductibleSub': 'cespiti rateizzati su più esercizi',
       'exp.billableNote': 'Le spese rimborsabili vengono incluse automaticamente nel rapporto del cliente.',
+      'exp.invoiceHint': 'I costi documentati da fattura elettronica si gestiscono in Fatture.',
       // Expense form
       'ef.category': 'Categoria',
       'ef.day': 'Giorno',
@@ -572,6 +577,10 @@
       'dash.vsLastMonth': 'vs last month',
       'dash.activeInMonth': 'active clients this month',
       'dash.outOf': 'of {n} total',
+      'dash.invoicedYTD': 'Invoiced revenue YTD',
+      'dash.toCollect': 'To collect',
+      'dash.costsByCategory': 'Costs by category',
+      'dash.upcoming': 'Upcoming due dates',
 
       // Clients
       'client.new': 'New client',
@@ -703,6 +712,7 @@
       'exp.irpefDeductible': 'Tax-deductible cost (year)',
       'exp.irpefDeductibleSub': 'assets depreciated over multiple years',
       'exp.billableNote': 'Reimbursable expenses are automatically included in the client report.',
+      'exp.invoiceHint': 'Costs backed by an e-invoice are managed in Invoices.',
       // Expense form
       'ef.category': 'Category',
       'ef.day': 'Day',

@@ -82,6 +82,8 @@ const Expenses = ({ clients, expenses, currentMonthKey, onAdd, onEdit, onDelete 
         </button>
       </div>
 
+      {tab === "own" && <div className="hint" style={{ marginBottom: 8 }}>ⓘ {t('exp.invoiceHint')}</div>}
+
       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 16, flexWrap: "wrap", gap: 12 }}>
         <div className="filter-row">
           {tab === "billable" && (

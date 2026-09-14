@@ -348,7 +348,8 @@ const App = () => {
           })()}
           />
           {/* Route */}
-          {view === "dashboard" && <Dashboard clients={clients} activities={activities} currentMonthKey={currentMonthKey} onNav={handleNav} />}
+          {view === "dashboard" && <Dashboard clients={clients} activities={activities} expenses={expenses} invoices={invoices}
+            fiscal={fiscal || window.APP_DATA.fiscal} currentMonthKey={currentMonthKey} currentYear={year} onNav={handleNav} />}
           {view === "clients" && (selectedClientId
             ? <ClientDetail client={clients.find(c => c.id === selectedClientId)} activities={activities}
                 currentMonthKey={currentMonthKey}
@@ -362,7 +363,7 @@ const App = () => {
             currentYear={year} currentMonth={month} onNavMonth={navMonth}
             onAddActivity={p => setEditingActivity(p || {})} onEditActivity={a => setEditingActivity(a)}
             onDeleteActivities={handleDeleteActivities} />}
-          {view === "export" && <Export clients={clients} activities={activities} expenses={expenses}
+          {view === "export" && <Export clients={clients} activities={activities} expenses={expenses} invoices={invoices}
             currentMonthKey={currentMonthKey} studio={s}
             currentYear={year} currentMonth={month} onNavMonth={navMonth} />}
           {view === "expenses" && <Expenses clients={clients} expenses={expenses} currentMonthKey={currentMonthKey}

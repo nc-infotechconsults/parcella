@@ -169,7 +169,7 @@ ${exps.length > 0 ? `<tr><td>Rimborso spese</td><td align="right">+${fmtEUR(exps
 }
 
 // Export / Document preview
-const Export = ({ clients, activities, expenses, currentMonthKey, studio, currentYear, currentMonth, onNavMonth }) => {
+const Export = ({ clients, activities, expenses, invoices, currentMonthKey, studio, currentYear, currentMonth, onNavMonth }) => {
   const monthClients = clients.filter(c =>
     activities.some(a => a.clientId === c.id && a.monthKey === currentMonthKey) ||
     expenses.some(e => e.clientId === c.id && e.monthKey === currentMonthKey && e.billable)
@@ -357,6 +357,7 @@ const Export = ({ clients, activities, expenses, currentMonthKey, studio, curren
           {format === "pdf" && client && <PdfPreview client={client} acts={acts} exps={exps} totalHours={totalHours} amounts={amounts} docNum={docNum} docDate={docDate} user={u} monthLabel={monthLabel} periodStart={`01/${mm}/${cYear}`} periodEnd={docDate} cYear={cYear} mm={mm} mode={mode} summaryRows={summaryRows} />}
           {format === "excel" && client && <ExcelPreview client={client} acts={acts} totalHours={totalHours} amounts={amounts} user={u} monthLabel={monthLabel} periodStart={`01/${mm}/${cYear}`} periodEnd={docDate} cYear={cYear} mm={mm} mode={mode} summaryRows={summaryRows} />}
           {format === "word" && client && <WordPreview client={client} acts={acts} totalHours={totalHours} amounts={amounts} docNum={docNum} docDate={docDate} user={u} monthLabel={monthLabel} periodStart={`01/${mm}/${cYear}`} periodEnd={docDate} cYear={cYear} mm={mm} mode={mode} summaryRows={summaryRows} />}
+          <InvoicedForMonth client={client} monthKey={currentMonthKey} invoices={invoices} acts={acts} />
           <ReconciliationPanel client={client} acts={acts} allActivities={activities} />
         </div>
       </div>
@@ -810,6 +811,44 @@ const WordPreview = ({ client, acts, totalHours, amounts, docNum, docDate, user,
     </div>
   </div>
 );
+
+// The work report states the work; the invoice states what was agreed. A gap
+// between them is information about an off-book agreement, never an error to
+// fix — hence muted styling and no warning glyph (P1).
+const InvoicedForMonth = ({ client, monthKey, invoices, acts }) => {
+  if (!client) return null;
+  const linked = (invoices || []).filter(i =>
+    i.direction === 'active' && i.clientId === client.id && i.linkedMonthKey === monthKey);
+  if (!linked.length) return null;
+
+  const invoiced = linked.reduce((s, i) => s + (i.sign || 1) * i.totals.imponibile, 0);
+  const hours = acts.reduce((s, a) => s + a.hours, 0);
+
+  return (
+    <div style={{
+      marginTop: 16, padding: 16, background: "var(--bg-sunken)",
+      borderRadius: "var(--radius)", border: "1px solid var(--border)",
+    }}>
+      <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--text-muted)", marginBottom: 12, fontWeight: 600 }}>
+        Fatturato per questo mese
+      </div>
+      {linked.map(i => (
+        <div key={i.id} style={{ display: "flex", justifyContent: "space-between", fontSize: 12, padding: "3px 0" }}>
+          <span style={{ color: "var(--text-muted)" }}>{i.number} — {i.date}</span>
+          <span className="mono">{fmtEUR((i.sign || 1) * i.totals.imponibile)}</span>
+        </div>
+      ))}
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, padding: "6px 0 0", marginTop: 6, borderTop: "1px solid var(--border)" }}>
+        <span style={{ color: "var(--text-muted)" }}>Lavoro registrato</span>
+        <span className="mono">{fmtH(hours)}</span>
+      </div>
+      <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 8 }}>
+        Importo imponibile come da fattura emessa. Eventuali differenze rispetto al lavoro
+        registrato dipendono da accordi non rappresentati nelle regole dell'app.
+      </div>
+    </div>
+  );
+};
 
 const MAX_DISPLAYED_PCT = 999;
 
