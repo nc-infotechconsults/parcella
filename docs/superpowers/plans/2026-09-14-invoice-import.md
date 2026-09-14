@@ -929,7 +929,12 @@ function extractP7M(buffer) {
     }
   }
   const xml = findXmlInDER(buf);
-  if (xml) return xml.slice(0, xml.lastIndexOf('>') + 1);
+  // findXmlInDER already returns exactly the DER-delimited OCTET STRING payload
+  // starting at '<?xml' — no further trimming. Cutting at the last '>' would
+  // drop a trailing newline that is genuine file content, and Task 6 hashes
+  // this string as a dedup guard: the same document arriving once as .xml and
+  // once as .xml.p7m must hash identically.
+  if (xml) return xml;
   throw new Error('Contenuto XML non trovato nel file .p7m');
 }
 
