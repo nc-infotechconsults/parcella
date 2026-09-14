@@ -84,6 +84,12 @@
       'imp.done': 'Importate {n} fatture',
       'imp.noStudio': 'Imposta P.IVA e Codice Fiscale in Impostazioni prima di importare.',
       'imp.selectClient': '— cliente —',
+      'imp.status': 'Stato',
+      'imp.selectedCount': '{n} selezionate',
+      'imp.bulkSettle': 'Segna saldate',
+      'imp.bulkCategory': 'Categoria…',
+      'imp.bulkClient': 'Cliente…',
+      'imp.bulkExclude': 'Escludi',
 
       // Common actions
       'action.save': 'Salva',
@@ -528,6 +534,12 @@
       'imp.done': 'Imported {n} invoices',
       'imp.noStudio': 'Set your VAT number and tax code in Settings before importing.',
       'imp.selectClient': '— client —',
+      'imp.status': 'Status',
+      'imp.selectedCount': '{n} selected',
+      'imp.bulkSettle': 'Mark settled',
+      'imp.bulkCategory': 'Category…',
+      'imp.bulkClient': 'Client…',
+      'imp.bulkExclude': 'Exclude',
 
       // Common
       'action.save': 'Save',

@@ -29,6 +29,7 @@ const InvoiceImportWizard = ({ open, onClose, onImported }) => {
           // for review: remembering a rule the user never actually looked at is
           // how a wrong category becomes permanent.
           rememberSupplier: it.direction === 'passive' && !it.needsReview,
+          settlement: { ...it.proposal.settlement },
         };
       });
       setDecisions(initial);
@@ -41,6 +42,44 @@ const InvoiceImportWizard = ({ open, onClose, onImported }) => {
   };
 
   const setDecision = (id, patch) => setDecisions(d => ({ ...d, [id]: { ...d[id], ...patch } }));
+
+  const today = () => new Date().toISOString().slice(0, 10);
+  const [bulkDate, setBulkDate] = useState(today());
+
+  // One place decides what changing a category means, so the per-row select and
+  // the bulk action cannot drift apart. A stale `amortize` is a wrong tax
+  // treatment — capitalising a non-asset, or expensing a real one in full — so
+  // this deliberately mirrors proposeFiscal, credit-note guard included.
+  const fiscalForCategory = (item, fiscal, cat) => {
+    const rule = window.CATEGORY_RULES[cat];
+    const amortize = (item.doc.sign || 1) > 0
+      && cat === 'Hardware'
+      && item.doc.totals.imponibile >= window.AMORTIZE_THRESHOLD;
+    return {
+      ...fiscal, category: cat, deductPct: rule ? rule.deductPct : 100,
+      amortize,
+      amortYears: amortize ? (fiscal.amortYears || 4) : null,
+      firstYearHalf: amortize,
+    };
+  };
+
+  const settlementOf = it => (decisions[it.id] && decisions[it.id].settlement) || it.proposal.settlement;
+  const setSettlement = (it, patch) => setDecision(it.id, { settlement: { ...settlementOf(it), ...patch } });
+
+  // Bulk actions act on what is ticked: ticked means "will be imported", which
+  // is also the only sensible target for a mass edit.
+  const selected = () => (manifest ? manifest.items.filter(i =>
+    decisions[i.id] && decisions[i.id].accept && i.status !== 'imported') : []);
+  const selectedCount = selected().length;
+  const bulkSettle = () => selected().forEach(it =>
+    setDecision(it.id, { settlement: { ...settlementOf(it), status: 'settled', date: bulkDate } }));
+  const bulkCategory = cat => selected().filter(it => it.direction === 'passive').forEach(it => {
+    const d = decisions[it.id];
+    setDecision(it.id, { fiscal: fiscalForCategory(it, d.fiscal || it.proposal.fiscal, cat) });
+  });
+  const bulkClient = clientId => selected().filter(it => it.direction === 'active').forEach(it =>
+    setDecision(it.id, { clientId: clientId || null }));
+  const bulkExclude = () => selected().forEach(it => setDecision(it.id, { accept: false }));
 
   const commit = async () => {
     setBusy(true);
@@ -101,6 +140,26 @@ const InvoiceImportWizard = ({ open, onClose, onImported }) => {
             <span className="badge">{t('imp.discarded')}: {manifest.skipped.length}</span>
           </div>
 
+          {selectedCount > 0 && (
+            <div className="filter-row" style={{ gap: 8, alignItems: 'center', marginTop: 12,
+              padding: '8px 12px', background: 'var(--bg-sunken)',
+              border: '1px solid var(--border)', borderRadius: 'var(--radius)' }}>
+              <strong>{t('imp.selectedCount', { n: selectedCount })}</strong>
+              <input type="date" className="input mono" style={{ width: 150 }}
+                value={bulkDate} onChange={e => setBulkDate(e.target.value)} />
+              <button className="btn btn-sm" onClick={bulkSettle}>{t('imp.bulkSettle')}</button>
+              <select className="select" value="" onChange={e => { if (e.target.value) bulkCategory(e.target.value); }}>
+                <option value="">{t('imp.bulkCategory')}</option>
+                {Object.keys(window.CATEGORY_RULES).map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+              <select className="select" value="" onChange={e => bulkClient(e.target.value)}>
+                <option value="">{t('imp.bulkClient')}</option>
+                {(window.__clients || []).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+              <button className="btn btn-sm" onClick={bulkExclude}>{t('imp.bulkExclude')}</button>
+            </div>
+          )}
+
           {groups.map(g => (
             <div className="card" key={g.key} style={{ marginTop: 16 }}>
               <div className="card-header">
@@ -123,6 +182,7 @@ const InvoiceImportWizard = ({ open, onClose, onImported }) => {
                     <th>{t('inv.counterparty')}</th>
                     <th className="num" style={{ width: 100 }}>{t('inv.total')}</th>
                     <th style={{ width: 190 }}>{t('inv.classification')}</th>
+                    <th style={{ width: 190 }}>{t('imp.status')}</th>
                     <th style={{ width: 150 }} />
                   </tr>
                 </thead>
@@ -146,23 +206,9 @@ const InvoiceImportWizard = ({ open, onClose, onImported }) => {
                         <td>
                           {it.direction === 'passive' && d.fiscal ? (
                             <select className="select" value={d.fiscal.category}
-                              onChange={e => {
-                                const cat = e.target.value;
-                                const r = window.CATEGORY_RULES[cat];
-                                // Recompute the cespite decision, not only the category: this row
-                                // exists to correct a wrong guess, and a stale `amortize` would
-                                // either capitalise a non-asset or expense a real one in full.
-                                // Mirrors proposeFiscal, including its credit-note guard.
-                                const amortize = (it.doc.sign || 1) > 0
-                                  && cat === 'Hardware'
-                                  && it.doc.totals.imponibile >= window.AMORTIZE_THRESHOLD;
-                                setDecision(it.id, { fiscal: {
-                                  ...d.fiscal, category: cat, deductPct: r ? r.deductPct : 100,
-                                  amortize,
-                                  amortYears: amortize ? (d.fiscal.amortYears || 4) : null,
-                                  firstYearHalf: amortize,
-                                } });
-                              }}>
+                              onChange={e => setDecision(it.id, {
+                                fiscal: fiscalForCategory(it, d.fiscal, e.target.value),
+                              })}>
                               {Object.keys(window.CATEGORY_RULES).map(c => <option key={c} value={c}>{c}</option>)}
                             </select>
                           ) : (
@@ -182,6 +228,26 @@ const InvoiceImportWizard = ({ open, onClose, onImported }) => {
                                 value={d.linkedMonthKey || ''}
                                 onChange={e => setDecision(it.id, { linkedMonthKey: e.target.value || null })} />
                             </div>
+                          )}
+                        </td>
+                        <td>
+                          {/* Set here, at import time, so a folder of invoices you
+                              have already been paid for does not have to be opened
+                              one by one afterwards. */}
+                          <select className="select" value={settlementOf(it).status || 'open'}
+                            onChange={e => setSettlement(it, {
+                              status: e.target.value,
+                              date: e.target.value === 'settled'
+                                ? (settlementOf(it).date || bulkDate || today())
+                                : settlementOf(it).date,
+                            })}>
+                            <option value="open">{it.direction === 'active' ? t('inv.open') : t('inv.openPassive')}</option>
+                            <option value="settled">{it.direction === 'active' ? t('inv.settled') : t('inv.settledPassive')}</option>
+                          </select>
+                          {settlementOf(it).status === 'settled' && (
+                            <input type="date" className="input mono" style={{ marginTop: 4 }}
+                              value={settlementOf(it).date || ''}
+                              onChange={e => setSettlement(it, { date: e.target.value || null })} />
                           )}
                         </td>
                         <td>
