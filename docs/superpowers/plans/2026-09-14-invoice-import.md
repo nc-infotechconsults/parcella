@@ -699,7 +699,7 @@ module.exports = { TIPO_DOC, normalizeId, classify, dedupKey };
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `node --test tests/test-fattura-classify.js`
-Expected: PASS — 14 tests.
+Expected: PASS — 21 tests.
 
 Note: `normalizeId('IE1111111AA')` returns `IE1111111AA` unchanged (the `IT` rule only applies to Italian 11-digit VAT numbers), which is why the expected dedup key starts with `IE`.
 
@@ -2189,7 +2189,9 @@ Create `src/renderer/fiscal.js`:
     const sign = inv.sign || 1;
     const imponibile = round2(sign * (inv.totals.imponibile || 0));
     const imposta = round2(sign * (inv.totals.imposta || 0));
-    const inAmortization = !!f.amortize;
+    // A credit note is never a cespite: sign < 0 reverses an acquisition, so it
+    // belongs on the ordinary cost path and must reduce, not extend, deduction.
+    const inAmortization = !!f.amortize && sign > 0;
     return {
       imponibile,
       imposta,
@@ -2318,7 +2320,8 @@ computeFiscalYear({ year, invoices, activities, expenses, clients, fiscal, compu
                 ivaDebito, ivaCredito, ivaReverse, ivaSaldo },
   previsionale: { ricavi, months: Array<{ clientId, monthKey, imponibile }> },
   coveredMonths: { [`${clientId}|${monthKey}`]: invoiceId },
-  periods: Array<{ id, label, months, ivaDebito, ivaCredito, ivaReverse, saldo }>,
+  periods: Array<{ id, label, months, ivaDebito, ivaCredito, ivaReverse,
+                   creditoPrecedente, saldoLordo, saldo }>,
   cespiti: Array<Schedule & { quotaYear, residual }>,
   costiPerCategoria: { [category]: number },
   scadenze: Array<{ id, date, direction, counterparty, amount }>,
@@ -2518,6 +2521,101 @@ test('open invoices with a due date become scadenze, newest last', () => {
   assert.equal(r.scadenze[0].direction, 'active');
 });
 
+test('a 2025 invoice settled in 2026 is 2026 cash revenue, not 2026 turnover', () => {
+  // The discriminating case for P4: without the two-date split this test and
+  // its twin below cannot both pass.
+  const old = activeInvoice({
+    id: 'inv_old', date: '2025-12-20', monthKey: '2025-12', linkedMonthKey: null,
+    settlement: { status: 'settled', date: '2026-02-10', amount: 7612.80 },
+  });
+  const r = run({ invoices: [old] });
+  near(r.consuntivo.ricavi, 0);              // turnover belongs to 2025
+  near(r.consuntivo.ricaviIncassati, 6240);  // the cash arrived in 2026
+  near(r.consuntivo.ritenutaIncassata, 1248);
+  near(r.consuntivo.ivaDebito, 0);           // VAT followed the 2025 document
+});
+
+test('a 2026 invoice settled in 2027 is 2026 turnover but not 2026 cash', () => {
+  const late = activeInvoice({
+    id: 'inv_late',
+    settlement: { status: 'settled', date: '2027-01-15', amount: 7612.80 },
+  });
+  const r = run({ invoices: [late] });
+  near(r.consuntivo.ricavi, 6240);
+  near(r.consuntivo.ricaviIncassati, 0);
+  near(r.consuntivo.ivaDebito, 1372.80);
+});
+
+test('a 2025 cost paid in 2026 deducts in 2026 but detracts VAT in neither', () => {
+  const old = passiveInvoice({
+    id: 'inv_oldp', date: '2025-11-30', monthKey: '2025-11',
+    settlement: { status: 'settled', date: '2026-01-15', amount: 122 },
+  });
+  const r = run({ invoices: [old] });
+  near(r.consuntivo.costiDeducibili, 100);
+  near(r.consuntivo.costiCompetenza, 0);
+  near(r.consuntivo.ivaCredito, 0);
+});
+
+test('a credit note on a cespite reduces cost instead of creating a schedule', () => {
+  const nc = passiveInvoice({
+    id: 'inv_nc_hw', tipoDoc: 'TD04', sign: -1, date: '2026-05-15',
+    totals: { imponibile: 2400, imposta: 528, documento: 2928 },
+    vatSummary: [{ vatPct: 22, imponibile: 2400, imposta: 528 }],
+    fiscal: { category: 'Hardware', deductPct: 100, vatDetractPct: 100, amortize: true, amortYears: 4, firstYearHalf: true },
+    settlement: { status: 'settled', date: '2026-05-15', amount: 2928 },
+  });
+  const r = run({ invoices: [nc] });
+  assert.equal(r.cespiti.length, 0);          // a return is not an acquisition
+  near(r.consuntivo.costiDeducibili, -2400);  // it removes cost, never adds quota
+  near(r.consuntivo.ivaCredito, -528);
+});
+
+test('manual-expense VAT reaches ivaCredito and its own period', () => {
+  const expenses = [
+    { id: 'e1', monthKey: '2026-03', amount: 1220, vatPct: 22, vatExempt: false, deductPct: 100, billable: false, amortize: false, category: 'Cancelleria' },
+  ];
+  const r = run({ expenses });
+  near(r.consuntivo.ivaCredito, 220);
+  near(r.periods.find(p => p.id === 'Q1').ivaCredito, 220);
+});
+
+test('a quarter ending in credit reduces what the next quarter pays', () => {
+  const bigCost = passiveInvoice({
+    id: 'inv_q1', date: '2026-02-10', monthKey: '2026-02',
+    totals: { imponibile: 5000, imposta: 1100, documento: 6100 },
+    vatSummary: [{ vatPct: 22, imponibile: 5000, imposta: 1100 }],
+    settlement: { status: 'open', date: null, amount: 6100 },
+  });
+  const sale = activeInvoice({
+    id: 'inv_q2', date: '2026-05-31', monthKey: '2026-05', linkedMonthKey: null,
+    totals: { imponibile: 3000, imposta: 660, documento: 3660 },
+    vatSummary: [{ vatPct: 22, imponibile: 3000, imposta: 660 }],
+    withholding: null, cassa: null,
+  });
+  const r = run({ invoices: [bigCost, sale] });
+  const [q1, q2, q3] = r.periods;
+  near(q1.saldoLordo, -1100);
+  near(q1.saldo, 0);               // a credit is never a payment
+  near(q2.creditoPrecedente, 1100);
+  near(q2.saldoLordo, 660);
+  near(q2.saldo, 0);               // absorbed by the carried credit
+  near(q3.creditoPrecedente, 440); // and the remainder keeps travelling
+});
+
+test('an active credit note does not suppress its month forecast', () => {
+  const nc = activeInvoice({
+    id: 'inv_ncA', tipoDoc: 'TD04', sign: -1,
+    totals: { imponibile: 1000, imposta: 220, documento: 1220 },
+    vatSummary: [{ vatPct: 22, imponibile: 1000, imposta: 220 }],
+    withholding: null, cassa: null,
+  });
+  const activities = [{ id: 'a1', clientId: 'c1', monthKey: '2026-07', hours: 50, day: 3 }];
+  const r = run({ invoices: [nc], activities });
+  near(r.previsionale.ricavi, 5000);   // the work still needs invoicing
+  assert.equal(r.coveredMonths['c1|2026-07'], undefined);
+});
+
 test('cash-basis revenue counts only settled invoices', () => {
   const settled = activeInvoice({ id: 'inv_s', settlement: { status: 'settled', date: '2026-09-15', amount: 7612.80 } });
   const r = run({ invoices: [activeInvoice(), settled] });
@@ -2565,6 +2663,7 @@ In `src/renderer/fiscal.js`, add before the final `return { ... }`:
     const settledInYear = inv => inv.settlement && inv.settlement.status === 'settled' && inYear(inv.settlement.date);
 
     const byDocDate = invoices.filter(i => inYear(i.date));
+    const manual = expenses.filter(e => !e.billable && String(e.monthKey || '').startsWith(yr + '-'));
     const active = byDocDate.filter(i => i.direction === 'active' && !i.reverseCharge);
     const passive = byDocDate.filter(i => i.direction === 'passive' && !i.reverseCharge);
     const reverse = byDocDate.filter(i => i.reverseCharge);
@@ -2582,13 +2681,16 @@ In `src/renderer/fiscal.js`, add before the final `return { ... }`:
     const detractedOn = inv => ivaOn(inv) * pct(inv.fiscal && inv.fiscal.vatDetractPct) / 100;
     const ivaReverse = round2(reverse.reduce((s, i) => s + ivaOn(i), 0));
     const ivaDebito = round2(active.reduce((s, i) => s + ivaOn(i), 0) + ivaReverse);
+    // Manual expenses carry detractable VAT too — taxes.jsx has always counted
+    // it, and dropping it here would silently raise what the user pays.
+    const ivaCreditoSpese = round2(manual.reduce((s, e) => s + computeExpenseFiscals(e).vatDetracted, 0));
     const ivaCredito = round2(passive.reduce((s, i) => s + detractedOn(i), 0)
-      + reverse.reduce((s, i) => s + detractedOn(i), 0));
+      + reverse.reduce((s, i) => s + detractedOn(i), 0) + ivaCreditoSpese);
 
     // Costs — competenza vs cassa, with cespiti spread over their schedule
     const costInvoices = invoices.filter(i => i.direction === 'passive');
     const cespiti = costInvoices
-      .filter(i => i.fiscal && i.fiscal.amortize)
+      .filter(i => i.fiscal && i.fiscal.amortize && (i.sign || 1) > 0)
       .map(i => {
         const s = buildAmortSchedule(i);
         return { ...s, quotaYear: amortQuotaFor(s, year), residual: amortResidualAt(s, year) };
@@ -2599,8 +2701,10 @@ In `src/renderer/fiscal.js`, add before the final `return { ... }`:
         .reduce((s, i) => s + invoiceCostFiscals(i).imponibile * pct(i.fiscal && i.fiscal.deductPct) / 100, 0)
     );
 
-    const paidThisYear = costInvoices.filter(i => settledInYear(i) && !(i.fiscal && i.fiscal.amortize));
-    const manual = expenses.filter(e => !e.billable && String(e.monthKey || '').startsWith(yr + '-'));
+    // A cespite deducts by competenza through its schedule, so it is the one
+    // cost that escapes the cash basis; everything else waits to be paid.
+    const paidThisYear = costInvoices.filter(i =>
+      settledInYear(i) && !(i.fiscal && i.fiscal.amortize && (i.sign || 1) > 0));
     const costiDeducibili = round2(
       paidThisYear.reduce((s, i) => s + invoiceCostFiscals(i).deductible, 0)
       + cespiti.reduce((s, c) => s + c.quotaYear, 0)
@@ -2619,7 +2723,7 @@ In `src/renderer/fiscal.js`, add before the final `return { ... }`:
 
     // Forecast — only months no active invoice covers (no double counting)
     const coveredMonths = {};
-    invoices.filter(i => i.direction === 'active' && i.clientId && i.linkedMonthKey)
+    invoices.filter(i => i.direction === 'active' && (i.sign || 1) > 0 && i.clientId && i.linkedMonthKey)
       .forEach(i => { coveredMonths[`${i.clientId}|${i.linkedMonthKey}`] = i.id; });
 
     const monthTotals = new Map();
@@ -2640,16 +2744,29 @@ In `src/renderer/fiscal.js`, add before the final `return { ... }`:
 
     // Liquidation periods
     const periodDefs = fiscal.ivaLiquidazione === 'mensile' ? MONTHLY : QUARTERS;
+    let creditoRiportato = 0;
     const periods = periodDefs.map(p => {
       const inPeriod = list => list.filter(i => p.months.includes(i.date.slice(5, 7)));
       const rc = inPeriod(reverse);
       const dbt = round2(inPeriod(active).reduce((s, i) => s + ivaOn(i), 0) + rc.reduce((s, i) => s + ivaOn(i), 0));
-      const crd = round2(inPeriod(passive).reduce((s, i) => s + detractedOn(i), 0) + rc.reduce((s, i) => s + detractedOn(i), 0));
+      const speseVat = round2(manual
+        .filter(e => p.months.includes(String(e.monthKey).slice(5, 7)))
+        .reduce((s, e) => s + computeExpenseFiscals(e).vatDetracted, 0));
+      const crd = round2(inPeriod(passive).reduce((s, i) => s + detractedOn(i), 0) + rc.reduce((s, i) => s + detractedOn(i), 0) + speseVat);
+      // Real liquidation carries a period's credit forward: a quarter ending in
+      // credit reduces what the next quarter pays. Netting each period in
+      // isolation overstates the F24 the user actually files.
+      const lordo = round2(dbt - crd);
+      const creditoPrecedente = creditoRiportato;
+      const netto = round2(lordo - creditoPrecedente);
+      creditoRiportato = netto < 0 ? round2(-netto) : 0;
       return {
         id: p.id, label: p.label, months: p.months,
         ivaDebito: dbt, ivaCredito: crd,
         ivaReverse: round2(rc.reduce((s, i) => s + ivaOn(i), 0)),
-        saldo: round2(dbt - crd),
+        creditoPrecedente,
+        saldo: netto > 0 ? netto : 0,
+        saldoLordo: lordo,
       };
     });
 
