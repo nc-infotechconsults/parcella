@@ -2027,7 +2027,7 @@ git commit -m "feat: wire invoice import IPC and original-file archiving"
 - Consumes: `CATEGORY_RULES`, `AMORTIZE_THRESHOLD` from `src/shared/categories.js` (Task 6).
 - Produces (UMD — `require`-able in Node, `window.*` in the renderer):
   - `computeExpenseFiscals(e) => { gross, net, vat, vatDetracted, yearlyDeducted, inAmortization, nonDeductible }` — behaviour identical to today's function.
-  - `invoiceCostFiscals(inv) => { imponibile, imposta, vatDetracted, deductible, inAmortization }` — signed, reverse-charge aware.
+  - `invoiceCostFiscals(inv) => { imponibile, imposta, vatDetracted, deductible, inAmortization }` — signed (TD04 flows through with `sign: -1`). It does NOT branch on `reverseCharge`: a reverse-charge document's COST treatment is identical to any other purchase. The reverse-charge asymmetry is purely a VAT-period concern and lives in `computeFiscalYear`, which routes the same `imposta` to both debito and credito.
   - `buildAmortSchedule(inv) => { id, desc, date, startYear, cost, years, firstYearHalf, quotas: Array<{ year, amount }> }`
   - `amortQuotaFor(schedule, year) => number`, `amortResidualAt(schedule, year) => number`
 
