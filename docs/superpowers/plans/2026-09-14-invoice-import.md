@@ -1032,7 +1032,7 @@ module.exports = { unwrap, extractP7M, readZip };
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `node --test tests/test-fattura-unwrap.js`
-Expected: PASS — 9 tests.
+Expected: PASS — 10 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -1480,6 +1480,17 @@ test('a cespite above the threshold is proposed with amortization', () => {
   assert.equal(hw.items[0].proposal.fiscal.firstYearHalf, true);
 });
 
+test('a credit note is never proposed as a cespite', () => {
+  const xml = fixtures.read('passiva-td04-nota-credito.xml')
+    .replace('Storno canone noleggio', 'Storno MacBook Pro notebook')
+    .replace('<ImponibileImporto>65.58</ImponibileImporto>', '<ImponibileImporto>2400.00</ImponibileImporto>');
+  const m = buildManifest(base({
+    files: [{ sourcePath: '/tmp/nc.xml', name: 'nc.xml', buffer: Buffer.from(xml, 'utf-8') }],
+  }));
+  assert.equal(m.items[0].proposal.fiscal.category, 'Hardware');
+  assert.equal(m.items[0].proposal.fiscal.amortize, false);   // a return is not an acquisition
+});
+
 test('unreadable files are skipped with a reason, not fatal', () => {
   const m = buildManifest(base({
     files: [
@@ -1673,7 +1684,11 @@ function proposeFiscal(doc, counterparty, supplierRules) {
   const fromLines = guessCategory(text);
   const category = fromLines !== 'Altro' ? fromLines : guessCategory(counterparty.name || '');
   const rule = CATEGORY_RULES[category] || CATEGORY_RULES.Altro;
-  const amortize = doc.totals.imponibile >= AMORTIZE_THRESHOLD && category === 'Hardware';
+  // A credit note is never a cespite, so never propose one: otherwise the review
+  // panel renders "Ammortizza" pre-checked on a return and invites the user to
+  // confirm a treatment every consumer then has to neutralise.
+  const amortize = (doc.sign || 1) > 0
+    && doc.totals.imponibile >= AMORTIZE_THRESHOLD && category === 'Hardware';
   return {
     category,
     deductPct: rule.deductPct,
@@ -2116,6 +2131,20 @@ test('buildAmortSchedule without the half rule spreads evenly', () => {
   near(s.quotas[0].amount, 600);
 });
 
+test('buildAmortSchedule refuses to open a schedule for a credit note', () => {
+  // The guard is structural so that a future caller which forgets to filter on
+  // sign cannot reintroduce an inflated deduction.
+  const s = buildAmortSchedule({
+    id: 'inv_nc', sign: -1, date: '2026-05-15', lines: [],
+    totals: { imponibile: 2400 },
+    fiscal: { deductPct: 100, amortize: true, amortYears: 4, firstYearHalf: true },
+  });
+  near(s.cost, 0);
+  near(s.quotas.reduce((t, q) => t + q.amount, 0), 0);
+  near(amortQuotaFor(s, 2026), 0);
+  near(amortResidualAt(s, 2026), 0);
+});
+
 test('amortQuotaFor and amortResidualAt read the schedule', () => {
   const s = buildAmortSchedule({
     id: 'inv_z', date: '2026-05-15', totals: { imponibile: 2400 }, lines: [],
@@ -2208,7 +2237,11 @@ Create `src/renderer/fiscal.js`:
   function buildAmortSchedule(inv) {
     const f = inv.fiscal || {};
     const years = Math.max(1, Number(f.amortYears) || 4);
-    const base = round2(Math.abs(inv.totals.imponibile || 0) * pct(f.deductPct) / 100);
+    // Structural guard, not merely a caller convention: a credit note can never
+    // open a schedule. Both callers already filter on sign, but a future one
+    // might not, and the failure mode is a silently inflated deduction.
+    const base = (inv.sign || 1) < 0 ? 0
+      : round2(Math.abs(inv.totals.imponibile || 0) * pct(f.deductPct) / 100);
     const full = base / years;
     const startYear = Number(String(inv.date || '').slice(0, 4));
     const half = f.firstYearHalf !== false;
@@ -2800,7 +2833,7 @@ and add `computeFiscalYear` to the returned object.
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `node --test tests/test-fiscal-year.js`
-Expected: PASS — 14 tests.
+Expected: PASS — 15 tests.
 
 - [ ] **Step 5: Run the whole suite**
 
