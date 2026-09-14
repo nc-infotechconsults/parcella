@@ -855,6 +855,24 @@ test('rejects a p7m with no XML content', () => {
 test('rejects a malformed zip', () => {
   assert.throws(() => readZip(Buffer.from('not a zip at all', 'utf-8')), /ZIP non valido/);
 });
+
+test('a structurally valid zip with a corrupt local-header offset is rejected', () => {
+  // The dangerous case: EOCD and central directory both look right, so the
+  // reader gets far enough to dereference an offset that points nowhere.
+  const zip = buildZip([{ name: 'a.xml', data: Buffer.from('<?xml version="1.0"?><x/>', 'utf-8') }]);
+  const eocd = zip.length - 22;
+  const cdStart = zip.readUInt32LE(eocd + 16);
+  zip.writeUInt32LE(0xfffffff0, cdStart + 42);
+  assert.throws(() => readZip(zip), /ZIP non valido/);
+});
+
+test('a leading BOM is normalized away whatever the container', () => {
+  const xml = '\uFEFF' + fixtures.read('passiva-td04-nota-credito.xml');
+  const plain = unwrap('a.xml', Buffer.from(xml, 'utf-8'))[0].xml;
+  const signed = unwrap('a.xml.p7m', buildP7M(xml))[0].xml;
+  assert.equal(plain.charCodeAt(0), 0x3c);   // '<', not U+FEFF
+  assert.equal(plain, signed);               // identical bytes => identical dedup hash
+});
 ```
 
 - [ ] **Step 2: Run the test to verify it fails**
@@ -965,9 +983,15 @@ function readZip(buffer) {
     const localOffset = buf.readUInt32LE(pos + 42);
     const name = buf.subarray(pos + 46, pos + 46 + nameLen).toString('utf-8');
 
+    // localOffset and compSize come from the archive itself: untrusted. Without
+    // these guards a corrupt offset reaches readUInt16LE as a raw RangeError and
+    // a corrupt size reaches zlib, so the caller sees a Node internal message
+    // instead of the archive error this module promises.
+    if (localOffset + 30 > buf.length) throw new Error('Archivio ZIP non valido');
     const localNameLen = buf.readUInt16LE(localOffset + 26);
     const localExtraLen = buf.readUInt16LE(localOffset + 28);
     const dataStart = localOffset + 30 + localNameLen + localExtraLen;
+    if (dataStart + compSize > buf.length) throw new Error('Archivio ZIP non valido');
     const raw = buf.subarray(dataStart, dataStart + compSize);
 
     if (!name.endsWith('/')) {
@@ -982,19 +1006,24 @@ function readZip(buffer) {
 
 const isXmlName = n => /\.xml$/i.test(n);
 
+// Normalize here, at the one place every container converges: a BOM breaks the
+// XML parser, and leaving it on only the plain-.xml path would make the same
+// document hash two different ways depending on how it arrived.
+const stripBOM = s => (s.charCodeAt(0) === 0xFEFF ? s.slice(1) : s);
+
 function unwrap(fileName, buffer) {
   const lower = String(fileName).toLowerCase();
   if (lower.endsWith('.p7m')) {
-    return [{ name: fileName.replace(/\.p7m$/i, ''), xml: extractP7M(buffer) }];
+    return [{ name: fileName.replace(/\.p7m$/i, ''), xml: stripBOM(extractP7M(buffer)) }];
   }
   if (lower.endsWith('.zip')) {
     return readZip(buffer)
       .filter(e => isXmlName(e.name) || /\.xml\.p7m$/i.test(e.name))
       .map(e => (/\.p7m$/i.test(e.name)
-        ? { name: e.name.replace(/\.p7m$/i, ''), xml: extractP7M(e.data) }
-        : { name: e.name, xml: e.data.toString('utf-8') }));
+        ? { name: e.name.replace(/\.p7m$/i, ''), xml: stripBOM(extractP7M(e.data)) }
+        : { name: e.name, xml: stripBOM(e.data.toString('utf-8')) }));
   }
-  return [{ name: fileName, xml: Buffer.isBuffer(buffer) ? buffer.toString('utf-8') : String(buffer) }];
+  return [{ name: fileName, xml: stripBOM(Buffer.isBuffer(buffer) ? buffer.toString('utf-8') : String(buffer)) }];
 }
 
 module.exports = { unwrap, extractP7M, readZip };
@@ -1003,7 +1032,7 @@ module.exports = { unwrap, extractP7M, readZip };
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `node --test tests/test-fattura-unwrap.js`
-Expected: PASS — 7 tests.
+Expected: PASS — 9 tests.
 
 - [ ] **Step 5: Commit**
 
