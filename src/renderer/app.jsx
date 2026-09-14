@@ -290,7 +290,7 @@ const App = () => {
       return Array.from(byId.values());
     });
     if (rules) setSupplierRules(rules);
-    window.showToast(`Importate ${records.length} fatture`, 'success');
+    window.showToast(t('imp.done', { n: records.length }), 'success');
   };
 
   const handleResetData = () => {
