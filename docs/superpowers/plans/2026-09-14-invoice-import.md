@@ -1576,6 +1576,13 @@ test('safeArchiveName contains every path-traversal attempt', () => {
     const dest = path.join(dir, 'deadbeef_' + safeArchiveName(a));
     assert.ok(dest.startsWith(dir + path.sep), `escaped the archive dir: ${a}`);
   }
+  // Containment alone cannot police the backslash normalization: on POSIX a
+  // backslash payload never traverses anyway, so the assertion above passes
+  // with or without the guard. Assert the OUTPUT, which differs — without the
+  // normalization basename returns the whole string, since it splits only on
+  // '/'. This is what fails if a future edit drops the .replace().
+  assert.equal(safeArchiveName('..\\..\\..\\Windows\\System32\\evil.xml'), 'evil.xml');
+
   // Real Agenzia delle Entrate filenames must survive untouched.
   assert.equal(safeArchiveName('IT04204200135_0JILg.xml'), 'IT04204200135_0JILg.xml');
   assert.equal(safeArchiveName('COPIA_IT04204200135_0KDbm.xml'), 'COPIA_IT04204200135_0KDbm.xml');
