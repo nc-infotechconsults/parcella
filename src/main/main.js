@@ -48,16 +48,9 @@ async function setPassphrase(pw) {
   if (keytar) await keytar.setPassword(KEYTAR_SERVICE, KEYTAR_ACCOUNT, pw);
 }
 
-// Load DB module with SQLite fallback
-let AppDB;
-try {
-  AppDB = require('./db');
-  AppDB._type = 'sqlite';
-} catch (e) {
-  console.warn('[main] better-sqlite3 unavailable, using JSON fallback:', e.message);
-  AppDB = require('./db-json');
-  AppDB._type = 'json';
-}
+// Load DB module with SQLite fallback. The guard lives in db-open because the
+// native addon throws at CONSTRUCTION, not at require — see that file.
+const { openDatabase } = require('./db-open');
 
 const { collectFiles, buildManifest, finalizeRecords, safeArchiveName, archiveYear } = require('./invoice-import');
 
@@ -114,7 +107,7 @@ function oneDrivePath() {
 function createWindow() {
   const userData = app.getPath('userData');
   const dbPath = path.join(userData, 'timesheet.db');
-  db = new AppDB(dbPath);
+  db = openDatabase(dbPath);
 
   win = new BrowserWindow({
     width: 1440,
@@ -223,7 +216,7 @@ function createWindow() {
   ipcMain.handle('db:getInfo', () => {
     const icloud = iCloudPath();
     const dropbox = dropboxPath();
-    return { dbPath, dbType: AppDB._type || 'unknown', stats: db.stats(), icloud, dropbox };
+    return { dbPath, dbType: db._type || 'unknown', stats: db.stats(), icloud, dropbox };
   });
 
   // ── Export / Import ──────────────────────────────────────────────
