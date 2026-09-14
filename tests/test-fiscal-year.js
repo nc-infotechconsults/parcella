@@ -184,6 +184,101 @@ test('open invoices with a due date become scadenze, newest last', () => {
   assert.equal(r.scadenze[0].direction, 'active');
 });
 
+test('a 2025 invoice settled in 2026 is 2026 cash revenue, not 2026 turnover', () => {
+  // The discriminating case for P4: without the two-date split this test and
+  // its twin below cannot both pass.
+  const old = activeInvoice({
+    id: 'inv_old', date: '2025-12-20', monthKey: '2025-12', linkedMonthKey: null,
+    settlement: { status: 'settled', date: '2026-02-10', amount: 7612.80 },
+  });
+  const r = run({ invoices: [old] });
+  near(r.consuntivo.ricavi, 0);              // turnover belongs to 2025
+  near(r.consuntivo.ricaviIncassati, 6240);  // the cash arrived in 2026
+  near(r.consuntivo.ritenutaIncassata, 1248);
+  near(r.consuntivo.ivaDebito, 0);           // VAT followed the 2025 document
+});
+
+test('a 2026 invoice settled in 2027 is 2026 turnover but not 2026 cash', () => {
+  const late = activeInvoice({
+    id: 'inv_late',
+    settlement: { status: 'settled', date: '2027-01-15', amount: 7612.80 },
+  });
+  const r = run({ invoices: [late] });
+  near(r.consuntivo.ricavi, 6240);
+  near(r.consuntivo.ricaviIncassati, 0);
+  near(r.consuntivo.ivaDebito, 1372.80);
+});
+
+test('a 2025 cost paid in 2026 deducts in 2026 but detracts VAT in neither', () => {
+  const old = passiveInvoice({
+    id: 'inv_oldp', date: '2025-11-30', monthKey: '2025-11',
+    settlement: { status: 'settled', date: '2026-01-15', amount: 122 },
+  });
+  const r = run({ invoices: [old] });
+  near(r.consuntivo.costiDeducibili, 100);
+  near(r.consuntivo.costiCompetenza, 0);
+  near(r.consuntivo.ivaCredito, 0);
+});
+
+test('a credit note on a cespite reduces cost instead of creating a schedule', () => {
+  const nc = passiveInvoice({
+    id: 'inv_nc_hw', tipoDoc: 'TD04', sign: -1, date: '2026-05-15',
+    totals: { imponibile: 2400, imposta: 528, documento: 2928 },
+    vatSummary: [{ vatPct: 22, imponibile: 2400, imposta: 528 }],
+    fiscal: { category: 'Hardware', deductPct: 100, vatDetractPct: 100, amortize: true, amortYears: 4, firstYearHalf: true },
+    settlement: { status: 'settled', date: '2026-05-15', amount: 2928 },
+  });
+  const r = run({ invoices: [nc] });
+  assert.equal(r.cespiti.length, 0);          // a return is not an acquisition
+  near(r.consuntivo.costiDeducibili, -2400);  // it removes cost, never adds quota
+  near(r.consuntivo.ivaCredito, -528);
+});
+
+test('manual-expense VAT reaches ivaCredito and its own period', () => {
+  const expenses = [
+    { id: 'e1', monthKey: '2026-03', amount: 1220, vatPct: 22, vatExempt: false, deductPct: 100, billable: false, amortize: false, category: 'Cancelleria' },
+  ];
+  const r = run({ expenses });
+  near(r.consuntivo.ivaCredito, 220);
+  near(r.periods.find(p => p.id === 'Q1').ivaCredito, 220);
+});
+
+test('a quarter ending in credit reduces what the next quarter pays', () => {
+  const bigCost = passiveInvoice({
+    id: 'inv_q1', date: '2026-02-10', monthKey: '2026-02',
+    totals: { imponibile: 5000, imposta: 1100, documento: 6100 },
+    vatSummary: [{ vatPct: 22, imponibile: 5000, imposta: 1100 }],
+    settlement: { status: 'open', date: null, amount: 6100 },
+  });
+  const sale = activeInvoice({
+    id: 'inv_q2', date: '2026-05-31', monthKey: '2026-05', linkedMonthKey: null,
+    totals: { imponibile: 3000, imposta: 660, documento: 3660 },
+    vatSummary: [{ vatPct: 22, imponibile: 3000, imposta: 660 }],
+    withholding: null, cassa: null,
+  });
+  const r = run({ invoices: [bigCost, sale] });
+  const [q1, q2, q3] = r.periods;
+  near(q1.saldoLordo, -1100);
+  near(q1.saldo, 0);               // a credit is never a payment
+  near(q2.creditoPrecedente, 1100);
+  near(q2.saldoLordo, 660);
+  near(q2.saldo, 0);               // absorbed by the carried credit
+  near(q3.creditoPrecedente, 440); // and the remainder keeps travelling
+});
+
+test('an active credit note does not suppress its month forecast', () => {
+  const nc = activeInvoice({
+    id: 'inv_ncA', tipoDoc: 'TD04', sign: -1,
+    totals: { imponibile: 1000, imposta: 220, documento: 1220 },
+    vatSummary: [{ vatPct: 22, imponibile: 1000, imposta: 220 }],
+    withholding: null, cassa: null,
+  });
+  const activities = [{ id: 'a1', clientId: 'c1', monthKey: '2026-07', hours: 50, day: 3 }];
+  const r = run({ invoices: [nc], activities });
+  near(r.previsionale.ricavi, 5000);   // the work still needs invoicing
+  assert.equal(r.coveredMonths['c1|2026-07'], undefined);
+});
+
 test('cash-basis revenue counts only settled invoices', () => {
   const settled = activeInvoice({ id: 'inv_s', settlement: { status: 'settled', date: '2026-09-15', amount: 7612.80 } });
   const r = run({ invoices: [activeInvoice(), settled] });
