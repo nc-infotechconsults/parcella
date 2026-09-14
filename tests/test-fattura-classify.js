@@ -49,6 +49,22 @@ test('a document involving neither party is flagged for review', () => {
   assert.match(c.reviewReason, /nessuna delle parti/i);
 });
 
+test('a reverse-charge document belonging to nobody we know is still flagged', () => {
+  const c = classify(load('autofattura-td18-signed.xml'), ['99999999999']);
+  assert.equal(c.direction, 'passive');
+  assert.equal(c.reverseCharge, true);
+  assert.equal(c.needsReview, true);
+  assert.match(c.reviewReason, /nessuna delle parti/i);
+});
+
+test('a document with the studio on both sides is flagged', () => {
+  const doc = load('attiva-td01-ritenuta-cassa.xml');
+  doc.cessionario = { ...doc.cessionario, vat: fixtures.STUDIO.piva, cf: fixtures.STUDIO.cf };
+  const c = classify(doc, STUDIO);
+  assert.equal(c.needsReview, true);
+  assert.match(c.reviewReason, /sia cedente sia cessionario/i);
+});
+
 test('classify requires the studio identity', () => {
   assert.throws(() => classify(load('passiva-td01-multirate.xml'), []), /studioIds/);
 });

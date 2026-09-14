@@ -45,7 +45,16 @@ function classify(doc, studioIds) {
   let reviewReason = null;
 
   if (rule && rule.forcePassive) {
+    // Self-invoices record a purchase even though the studio issues them, so
+    // TipoDocumento wins over party matching. The studio must still appear
+    // SOMEWHERE on the document: if it appears nowhere, the file belongs to
+    // someone else and is not ours to book. "Both parties" is deliberately not
+    // flagged here — TD21 (splafonamento) legitimately has exactly that shape.
     direction = 'passive';
+    if (!studioIsCedente && !studioIsCessionario) {
+      needsReview = true;
+      reviewReason = 'Lo studio non è nessuna delle parti del documento';
+    }
   } else if (studioIsCedente && !studioIsCessionario) {
     direction = 'active';
   } else if (studioIsCessionario && !studioIsCedente) {
@@ -61,7 +70,10 @@ function classify(doc, studioIds) {
 
   if (!rule) {
     needsReview = true;
-    reviewReason = `TipoDocumento ${doc.tipoDoc || '(assente)'} non riconosciuto`;
+    // Append rather than overwrite: a document can be both unrecognised AND
+    // unrelated to the studio, and the reviewer needs to see both reasons.
+    reviewReason = [reviewReason, `TipoDocumento ${doc.tipoDoc || '(assente)'} non riconosciuto`]
+      .filter(Boolean).join('; ');
   }
 
   return {
