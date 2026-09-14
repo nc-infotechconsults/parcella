@@ -105,11 +105,12 @@ const DataBackupTab = ({ onResetData }) => {
         <div className="card">
           <div className="card-header"><h3>Database SQLite</h3></div>
           <div className="card-body">
-            <div className="info-grid" style={{ gridTemplateColumns: "repeat(4, 1fr)", marginBottom: 16 }}>
+            <div className="info-grid" style={{ gridTemplateColumns: "repeat(5, 1fr)", marginBottom: 16 }}>
               <div className="info-cell"><div className="label">Tipo storage</div><div className="value mono">{info.dbType?.toUpperCase()}</div></div>
               <div className="info-cell"><div className="label">Dimensione</div><div className="value mono">{fmt(info.stats.sizeBytes)}</div></div>
               <div className="info-cell"><div className="label">Clienti</div><div className="value">{info.stats.clients}</div></div>
               <div className="info-cell"><div className="label">Attività</div><div className="value">{info.stats.activities}</div></div>
+              <div className="info-cell"><div className="label">Fatture</div><div className="value">{info.stats.invoices}</div></div>
             </div>
             <div style={{ fontSize: 11.5, color: "var(--text-muted)", fontFamily: "var(--font-mono)", wordBreak: "break-all" }}>
               {info.dbPath}
