@@ -287,6 +287,25 @@ const App = () => {
 
   // patch is a function of the invoice, so a bulk edit can depend on the record
   // it is changing — a category implies a different cespite decision per amount.
+  // Renaming or deleting a category has to move the documents that carry its
+  // name, or they would point at a category that no longer exists. Their fiscal
+  // VALUES are deliberately left untouched: a rename is a relabelling, and a
+  // reassignment should not silently restate a figure. Use "Riapplica regole"
+  // for that, deliberately.
+  const handleSaveCategories = (table, moves) => {
+    const names = Object.keys(moves || {});
+    if (names.length) {
+      setInvoices(list => list.map(i => (i.fiscal && moves[i.fiscal.category])
+        ? { ...i, fiscal: { ...i.fiscal, category: moves[i.fiscal.category] } } : i));
+      setExpenses(list => list.map(e => moves[e.category]
+        ? { ...e, category: moves[e.category] } : e));
+    }
+    setCategories(table);
+    window.showToast(names.length
+      ? t('cat.savedMoved', { n: names.length })
+      : t('cat.saved'), 'success');
+  };
+
   const handleBulkUpdateInvoices = (ids, patch) => {
     if (!ids.length) return;
     setInvoices(list => list.map(i => ids.includes(i.id) ? { ...i, ...patch(i) } : i));
@@ -400,7 +419,8 @@ const App = () => {
             onEdit={setEditingInvoice} onDelete={handleDeleteInvoice}
           onBulkUpdate={handleBulkUpdateInvoices} onBulkDelete={handleBulkDeleteInvoices} />}
           {view === "settings" && <Settings user={s} onSave={d => setStudio(d)} onResetData={handleResetData}
-            categories={categories} onSaveCategories={c => { setCategories(c); window.showToast(t('cat.saved'), 'success'); }} />}
+            categories={categories} invoices={invoices} expenses={expenses}
+            onSaveCategories={handleSaveCategories} />}
           {view === "taxes" && <Taxes activities={activities} expenses={expenses} fiscal={fiscal || window.APP_DATA.fiscal}
             clients={clients} studio={s} invoices={invoices} year={year}
             onUpdateFiscal={f => setFiscal(f)} />}

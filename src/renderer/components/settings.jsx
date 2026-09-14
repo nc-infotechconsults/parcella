@@ -255,63 +255,126 @@ const DataBackupTab = ({ onResetData }) => {
 // rather than on every document. Saved edits are stored as overrides and merged
 // over the built-in defaults; existing invoices keep the values they were
 // classified with, and only change if you explicitly re-apply.
-const CategoryRulesTab = ({ categories, onSaveCategories }) => {
+const CategoryRulesTab = ({ categories, invoices, expenses, onSaveCategories }) => {
   const effective = window.effectiveCategories(categories);
-  const [draft, setDraft] = useState(effective);
-  const set = (name, patch) => setDraft(d => ({ ...d, [name]: { ...d[name], ...patch } }));
+  const asRows = () => Object.keys(effective).sort().map((name, i) => ({
+    key: 'r' + i, original: name, name, rule: { ...effective[name] }, removed: false, moveTo: '',
+  }));
+  const [rows, setRows] = useState(asRows);
+  const [error, setError] = useState('');
+
+  const patch = (key, p) => setRows(rs => rs.map(r => r.key === key ? { ...r, ...p } : r));
+  const setRule = (key, p) => setRows(rs => rs.map(r => r.key === key ? { ...r, rule: { ...r.rule, ...p } } : r));
   const num = v => Math.min(100, Math.max(0, Number(v) || 0));
-  const changed = JSON.stringify(draft) !== JSON.stringify(effective);
+
+  // How many documents would a rename or a deletion move.
+  const usage = name => (invoices || []).filter(i => i.fiscal && i.fiscal.category === name).length
+    + (expenses || []).filter(e => e.category === name).length;
+
+  const addRow = () => setRows(rs => [...rs, {
+    key: 'n' + Date.now(), original: null, name: '',
+    rule: { deductPct: 100, vatDetractPct: 100, vatPct: 22, vatExempt: false },
+    removed: false, moveTo: '',
+  }]);
+
+  const live = rows.filter(r => !r.removed);
+  const names = live.map(r => r.name.trim());
+
+  const save = () => {
+    if (names.some(n => !n)) return setError(t('cat.errEmpty'));
+    if (new Set(names).size !== names.length) return setError(t('cat.errDup'));
+    // Altro is the fallback every unknown category resolves to; without it a
+    // deleted category would have nowhere to land.
+    if (!names.includes('Altro')) return setError(t('cat.errAltro'));
+    for (const r of rows) {
+      if (r.removed && r.original && usage(r.original) > 0 && !r.moveTo) return setError(t('cat.errMove'));
+    }
+    const table = {};
+    live.forEach(r => { table[r.name.trim()] = r.rule; });
+    const moves = {};
+    rows.forEach(r => {
+      if (r.removed && r.original && usage(r.original) > 0) moves[r.original] = r.moveTo;
+      else if (!r.removed && r.original && r.name.trim() !== r.original) moves[r.original] = r.name.trim();
+    });
+    setError('');
+    onSaveCategories(table, moves);
+  };
 
   return (
     <div className="card">
       <div className="card-header">
         <strong>{t('cat.title')}</strong>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-ghost btn-sm" disabled={!changed}
-            onClick={() => setDraft(effective)}>{t('action.cancel')}</button>
-          <button className="btn btn-primary btn-sm" disabled={!changed}
-            onClick={() => onSaveCategories(draft)}>{t('action.save')}</button>
+          <button className="btn btn-ghost btn-sm" onClick={addRow}>{t('cat.add')}</button>
+          <button className="btn btn-ghost btn-sm" onClick={() => { setRows(asRows()); setError(''); }}>{t('action.cancel')}</button>
+          <button className="btn btn-primary btn-sm" onClick={save}>{t('action.save')}</button>
         </div>
       </div>
       <div className="hint" style={{ padding: '0 16px 8px' }}>{t('cat.hint')}</div>
+      {error && <div className="hint" style={{ padding: '0 16px 8px', color: 'var(--danger)' }}>{error}</div>}
       <div style={{ overflowX: 'auto' }}>
         <table className="data">
           <thead>
             <tr>
               <th>{t('inv.category')}</th>
-              <th className="num" style={{ width: 120 }}>{t('cat.deduct')}</th>
-              <th className="num" style={{ width: 130 }}>{t('cat.vatDetract')}</th>
-              <th style={{ width: 170 }}>{t('cat.amort')}</th>
-              <th>{t('cat.note')}</th>
+              <th className="num" style={{ width: 110 }}>{t('cat.deduct')}</th>
+              <th className="num" style={{ width: 120 }}>{t('cat.vatDetract')}</th>
+              <th style={{ width: 160 }}>{t('cat.amort')}</th>
+              <th className="num" style={{ width: 80 }}>{t('cat.usage')}</th>
+              <th style={{ width: 200 }} />
             </tr>
           </thead>
           <tbody>
-            {Object.keys(draft).sort().map(name => {
-              const r = draft[name];
+            {rows.map(r => {
+              const used = r.original ? usage(r.original) : 0;
+              const protectedRow = r.original === 'Altro';
               return (
-                <tr key={name}>
-                  <td><strong>{name}</strong></td>
-                  <td className="num">
-                    <input type="number" className="input mono" min="0" max="100" style={{ width: 80 }}
-                      value={r.deductPct == null ? 100 : r.deductPct}
-                      onChange={e => set(name, { deductPct: num(e.target.value) })} />
+                <tr key={r.key} style={r.removed ? { opacity: 0.45 } : null}>
+                  <td>
+                    <input className="input" value={r.name} disabled={r.removed || protectedRow}
+                      onChange={e => patch(r.key, { name: e.target.value })} />
                   </td>
                   <td className="num">
-                    <input type="number" className="input mono" min="0" max="100" style={{ width: 80 }}
-                      value={r.vatDetractPct == null ? 100 : r.vatDetractPct}
-                      onChange={e => set(name, { vatDetractPct: num(e.target.value) })} />
+                    <input type="number" className="input mono" min="0" max="100" style={{ width: 75 }}
+                      disabled={r.removed} value={r.rule.deductPct == null ? 100 : r.rule.deductPct}
+                      onChange={e => setRule(r.key, { deductPct: num(e.target.value) })} />
+                  </td>
+                  <td className="num">
+                    <input type="number" className="input mono" min="0" max="100" style={{ width: 75 }}
+                      disabled={r.removed} value={r.rule.vatDetractPct == null ? 100 : r.rule.vatDetractPct}
+                      onChange={e => setRule(r.key, { vatDetractPct: num(e.target.value) })} />
                   </td>
                   <td>
                     <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <input type="checkbox" checked={!!r.amortize}
-                        onChange={e => set(name, { amortize: e.target.checked, amortYears: e.target.checked ? (r.amortYears || 4) : null })} />
-                      <input type="number" className="input mono" style={{ width: 60 }} min="1" max="20"
-                        disabled={!r.amortize} value={r.amortYears || 4}
-                        onChange={e => set(name, { amortYears: Math.max(1, Number(e.target.value) || 4) })} />
+                      <input type="checkbox" disabled={r.removed} checked={!!r.rule.amortize}
+                        onChange={e => setRule(r.key, { amortize: e.target.checked, amortYears: e.target.checked ? (r.rule.amortYears || 4) : null })} />
+                      <input type="number" className="input mono" style={{ width: 55 }} min="1" max="20"
+                        disabled={r.removed || !r.rule.amortize} value={r.rule.amortYears || 4}
+                        onChange={e => setRule(r.key, { amortYears: Math.max(1, Number(e.target.value) || 4) })} />
                       <span className="hint">{t('cat.years')}</span>
                     </label>
                   </td>
-                  <td className="hint">{r.hint || ''}</td>
+                  <td className="num mono">{used || ''}</td>
+                  <td>
+                    {r.removed ? (
+                      <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                        {used > 0 && (
+                          <select className="select" value={r.moveTo}
+                            onChange={e => patch(r.key, { moveTo: e.target.value })}>
+                            <option value="">{t('cat.moveTo')}</option>
+                            {live.filter(x => x.name.trim() && x.key !== r.key)
+                              .map(x => <option key={x.key} value={x.name.trim()}>{x.name}</option>)}
+                          </select>
+                        )}
+                        <button className="btn btn-ghost btn-sm" onClick={() => patch(r.key, { removed: false, moveTo: '' })}>
+                          {t('cat.undo')}
+                        </button>
+                      </div>
+                    ) : !protectedRow && (
+                      <button className="btn btn-ghost btn-sm" style={{ color: 'var(--danger)' }}
+                        onClick={() => patch(r.key, { removed: true })}>{t('cat.remove')}</button>
+                    )}
+                  </td>
                 </tr>
               );
             })}
@@ -322,7 +385,7 @@ const CategoryRulesTab = ({ categories, onSaveCategories }) => {
   );
 };
 
-const Settings = ({ user, onSave, onResetData, categories, onSaveCategories }) => {
+const Settings = ({ user, onSave, onResetData, categories, invoices, expenses, onSaveCategories }) => {
   const [data, setData] = useState(user);
   const [tab, setTab] = useState("profile");
   const update = (patch) => setData(d => ({ ...d, ...patch }));
@@ -617,7 +680,7 @@ const Settings = ({ user, onSave, onResetData, categories, onSaveCategories }) =
         </div>
       )}
 
-      {tab === "categories" && <CategoryRulesTab categories={categories} onSaveCategories={onSaveCategories} />}
+      {tab === "categories" && <CategoryRulesTab categories={categories} invoices={invoices} expenses={expenses} onSaveCategories={onSaveCategories} />}
       {tab === "data" && <DataBackupTab onResetData={onResetData} />}
 
       {tab !== "data" && (

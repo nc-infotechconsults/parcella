@@ -80,7 +80,8 @@
   function fiscalForCategory(category, opts) {
     const o = opts || {};
     const rules = o.rules || CATEGORY_RULES;
-    const rule = rules[category] || rules.Altro || CATEGORY_RULES.Altro;
+    const name = rules[category] ? category : 'Altro';
+    const rule = rules[name] || CATEGORY_RULES.Altro;
     const sign = o.sign == null ? 1 : o.sign;
     // Three conditions, all required: the category has to be a capital good, the
     // document has to be an acquisition (a credit note never opens a schedule),
@@ -90,7 +91,7 @@
       && sign > 0
       && (o.imponibile || 0) >= AMORTIZE_THRESHOLD;
     return {
-      category,
+      category: name,
       deductPct: rule.deductPct == null ? 100 : rule.deductPct,
       vatDetractPct: rule.vatDetractPct == null ? 100 : rule.vatDetractPct,
       amortize,
@@ -103,9 +104,19 @@
   // so a future default can still reach a user who never touched that category,
   // and so "reset" is just dropping the override.
   function effectiveCategories(saved) {
+    const keys = Object.keys(saved || {});
+    // Before the user ever edits, the built-in table IS the table. Once they have
+    // saved, THEIR key set is authoritative — otherwise a category they deleted
+    // would reappear on every load. Values still fall back to the default of the
+    // same name, so a rule saved with only a percentage keeps its VAT rate and note.
+    if (!keys.length) {
+      const out = {};
+      for (const [name, rule] of Object.entries(CATEGORY_RULES)) out[name] = { ...rule };
+      return out;
+    }
     const out = {};
-    for (const [name, rule] of Object.entries(CATEGORY_RULES)) out[name] = { ...rule };
-    for (const [name, rule] of Object.entries(saved || {})) out[name] = { ...(out[name] || {}), ...rule };
+    for (const name of keys) out[name] = { ...(CATEGORY_RULES[name] || {}), ...saved[name] };
+    if (!out.Altro) out.Altro = { ...CATEGORY_RULES.Altro };   // the fallback must exist
     return out;
   }
 
