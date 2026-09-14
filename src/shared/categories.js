@@ -47,11 +47,13 @@
     [/\b(?:corso|corsi|formazion|training|webinar|certificazion)\w*/i, "Formazione"],
     [/\b(?:abbonament|licen[zc]|subscription|software|hosting|dominio|github|microsoft|adobe|figma)\w*|\b(?:saas|cloud)\b/i, "Software"],
     [/\b(?:telefon|fibra|connettivit)\w*|\b(?:mobile|sim|adsl)\b/i, "Telefonia"],
-    [/\b(?:energia|elettric|utenz|bolletta|bollette)\w*|\b(?:gas|acqua|enel|luce)\b/i, "Utenze"],
+    // 'acqua' alone is not a utility signal — bottled water is a beverage
+    // purchase, so utility matching keys on idric/acquedott instead.
+    [/\b(?:energia|elettric|utenz|bolletta|bollette|idric|acquedott)\w*|\b(?:gas|enel|luce)\b/i, "Utenze"],
     [/\b(?:commission)\w*|\b(?:spese bancarie|bollo c\/c|canone conto)\b/i, "Commissioni bancarie"],
     [/\b(?:consulen|notai|commercialist|avvocat|perizi)\w*/i, "Consulenze"],
     [/\b(?:albergh|pernottament)\w*|\b(?:hotel|albergo|b&b)\b/i, "Pernottamento"],
-    [/\b(?:ristorant|catering)\w*|\b(?:pranzo|pranzi|cena|cene|bar)\b/i, "Pasti"],
+    [/\b(?:ristorant|catering)\w*|\b(?:pranzo|pranzi|cena|cene|bar|menu|menù|coperto)\b/i, "Pasti"],
     [/\b(?:trasfert|bigliett|trenitalia)\w*|\b(?:treno|treni|italo|volo|voli|aereo|taxi)\b/i, "Trasferta"],
     [/\b(?:cancelleri|toner)\w*|\b(?:carta|ufficio)\b/i, "Cancelleria"],
     [/\b(?:polizz|assicurazion)\w*|\brc professionale\b/i, "Assicurazioni"],

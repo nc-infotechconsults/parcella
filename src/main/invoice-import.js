@@ -51,10 +51,14 @@ function proposeFiscal(doc, counterparty, supplierRules) {
       firstYearHalf: remembered.firstYearHalf !== false,
     };
   }
-  // Deliberately excludes counterparty.name: a trade name is an unreliable
-  // signal, and per-supplier treatment is already covered by supplierRules.
+  // Lines first: a description is direct evidence of what was bought, and it
+  // keeps the guess independent of a supplier's trade name. The name is a
+  // fallback only, for documents whose lines carry no signal by construction —
+  // a reverse-charge integration reads "INTEGRAZIONE FATTURA N. x DEL y", where
+  // the supplier is the only evidence there is.
   const text = [doc.causale, ...doc.lines.map(l => l.desc)].join(' ');
-  const category = guessCategory(text);
+  const fromLines = guessCategory(text);
+  const category = fromLines !== 'Altro' ? fromLines : guessCategory(counterparty.name || '');
   const rule = CATEGORY_RULES[category] || CATEGORY_RULES.Altro;
   const amortize = doc.totals.imponibile >= AMORTIZE_THRESHOLD && category === 'Hardware';
   return {

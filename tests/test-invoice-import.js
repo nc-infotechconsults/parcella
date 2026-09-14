@@ -157,6 +157,17 @@ test('category inference handles Italian inflections without over-matching', () 
   for (const [desc, wrong] of forbidden) assert.notEqual(guessCategory(desc), wrong, desc);
 });
 
+test('proposals match how the user\'s real invoices actually read', () => {
+  const { guessCategory } = require('../src/shared/categories');
+  // Line text taken verbatim from real Agenzia delle Entrate exports.
+  assert.equal(guessCategory('MENU A PREZZO FISSO Tavolo: 93'), 'Pasti');          // 75%, not 100%
+  assert.equal(guessCategory('acqua santo stefano 1\\2 lt x 24 bt pet'), 'Altro'); // a drink, not a water bill
+  assert.equal(guessCategory('Virtual Machines Bsv2 Series'), 'Altro');            // no signal in the line...
+  assert.equal(guessCategory('Microsoft Srl'), 'Software');                        // ...but the supplier has one
+  assert.equal(guessCategory('INTEGRAZIONE FATTURA N. 9BF DEL 21/08/2026'), 'Altro');
+  assert.equal(guessCategory('GITHUB INC'), 'Software');
+});
+
 test('buildManifest refuses to run without the studio identity', () => {
   assert.throws(() => buildManifest(base({ files: [file('passiva-td04-nota-credito.xml')], studioIds: [] })), /studioIds/);
 });
