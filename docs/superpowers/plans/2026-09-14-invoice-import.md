@@ -3425,9 +3425,10 @@ In `src/renderer/i18n.js` (`it`, mirrored in `en`):
       'imp.confirm': 'Conferma e importa',
       'imp.done': 'Importate {n} fatture',
       'imp.noStudio': 'Imposta P.IVA e Codice Fiscale in Impostazioni prima di importare.',
+      'imp.selectClient': '— cliente —',
 ```
 
-English: `Import e-invoices`, `Choose folder or files…`, `Supports .xml, .xml.p7m and .zip. Nothing is saved until you confirm.`, `Reading files…`, `New`, `Duplicates in batch`, `Already imported`, `To review`, `Skipped`, `Select all`, `Remember for this supplier`, `Confirm and import`, `Imported {n} invoices`, `Set your VAT number and tax code in Settings before importing.`
+English: `— client —`, `Import e-invoices`, `Choose folder or files…`, `Supports .xml, .xml.p7m and .zip. Nothing is saved until you confirm.`, `Reading files…`, `New`, `Duplicates in batch`, `Already imported`, `To review`, `Skipped`, `Select all`, `Remember for this supplier`, `Confirm and import`, `Imported {n} invoices`, `Set your VAT number and tax code in Settings before importing.`
 
 - [ ] **Step 2: Write the wizard**
 
@@ -3581,7 +3582,7 @@ const InvoiceImportWizard = ({ open, onClose, onImported }) => {
                             <div style={{ display: 'flex', gap: 6 }}>
                               <select className="select" value={d.clientId || ''}
                                 onChange={e => setDecision(it.id, { clientId: e.target.value || null })}>
-                                <option value="">— cliente —</option>
+                                <option value="">{t('imp.selectClient')}</option>
                                 {(window.__clients || []).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                               </select>
                               {/* The covered month is proposed from the document date, which is
