@@ -214,4 +214,21 @@ function finalizeRecords({ items, decisions, supplierRules }) {
   return { records, supplierRules: rules };
 }
 
-module.exports = { collectFiles, buildManifest, finalizeRecords, proposeFiscal, proposeClient };
+// Archiving guards live here, exported and pure, so they carry regression tests.
+// They are the only thing standing between a crafted .zip entry name and a
+// write outside the archive directory, and an untested guard is one edit from
+// being dropped by accident.
+function safeArchiveName(fileName) {
+  // Normalize backslashes FIRST: POSIX basename does not treat \ as a
+  // separator, and this app ships Windows builds.
+  return path.basename(String(fileName || '').replace(/[\\]+/g, '/')) || 'fattura.xml';
+}
+
+function archiveYear(date) {
+  return /^\d{4}/.test(String(date)) ? String(date).slice(0, 4) : 'senza-data';
+}
+
+module.exports = {
+  collectFiles, buildManifest, finalizeRecords, proposeFiscal, proposeClient,
+  safeArchiveName, archiveYear,
+};

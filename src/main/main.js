@@ -59,7 +59,7 @@ try {
   AppDB._type = 'json';
 }
 
-const { collectFiles, buildManifest, finalizeRecords } = require('./invoice-import');
+const { collectFiles, buildManifest, finalizeRecords, safeArchiveName, archiveYear } = require('./invoice-import');
 
 let win;
 let db;
@@ -199,15 +199,11 @@ function createWindow() {
         // Everything filesystem-related is inside the try, mkdirSync included:
         // a directory that cannot be created must cost this record its archive
         // copy, never the whole batch's invoice data.
-        const year = /^\d{4}/.test(String(rec.date)) ? String(rec.date).slice(0, 4) : 'senza-data';
-        const yearDir = path.join(invoiceArchiveDir, year);
+        const yearDir = path.join(invoiceArchiveDir, archiveYear(rec.date));
         fs.mkdirSync(yearDir, { recursive: true });
-        // fileName can originate in a zip entry, i.e. in the archive's own
-        // bytes. It must never steer the write path: basename() drops directory
-        // components, and normalizing backslashes first covers Windows-style
-        // separators that POSIX basename would otherwise keep.
-        const safeName = path.basename(String(rec.src.fileName || '').replace(/[\\]+/g, '/')) || 'fattura.xml';
-        const dest = path.join(yearDir, `${rec.src.sha256.slice(0, 8)}_${safeName}`);
+        // safeArchiveName keeps a crafted zip-entry name from steering the
+        // write path; it is tested in tests/test-invoice-import.js.
+        const dest = path.join(yearDir, `${rec.src.sha256.slice(0, 8)}_${safeArchiveName(rec.src.fileName)}`);
         if (!fs.existsSync(dest)) fs.copyFileSync(item.file.sourcePath, dest);
         rec.src.archivePath = dest;
       } catch (err) {

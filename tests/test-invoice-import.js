@@ -168,6 +168,35 @@ test('proposals match how the user\'s real invoices actually read', () => {
   assert.equal(guessCategory('GITHUB INC'), 'Software');
 });
 
+test('safeArchiveName contains every path-traversal attempt', () => {
+  const path = require('path');
+  const { safeArchiveName } = require('../src/main/invoice-import');
+  const dir = path.join('/archive', '2026');
+  const attacks = [
+    '../../../../../../Users/x/.zshrc',
+    '..\\..\\..\\Windows\\System32\\evil.xml',
+    'sub/dir/fattura.xml',
+    '....//....//etc/passwd',
+    '',
+    null,
+  ];
+  for (const a of attacks) {
+    const dest = path.join(dir, 'deadbeef_' + safeArchiveName(a));
+    assert.ok(dest.startsWith(dir + path.sep), `escaped the archive dir: ${a}`);
+  }
+  // Real Agenzia delle Entrate filenames must survive untouched.
+  assert.equal(safeArchiveName('IT04204200135_0JILg.xml'), 'IT04204200135_0JILg.xml');
+  assert.equal(safeArchiveName('COPIA_IT04204200135_0KDbm.xml'), 'COPIA_IT04204200135_0KDbm.xml');
+});
+
+test('archiveYear falls back rather than naming a folder from undefined', () => {
+  const { archiveYear } = require('../src/main/invoice-import');
+  assert.equal(archiveYear('2026-08-31'), '2026');
+  assert.equal(archiveYear(undefined), 'senza-data');
+  assert.equal(archiveYear(''), 'senza-data');
+  assert.equal(archiveYear('not-a-date'), 'senza-data');
+});
+
 test('buildManifest refuses to run without the studio identity', () => {
   assert.throws(() => buildManifest(base({ files: [file('passiva-td04-nota-credito.xml')], studioIds: [] })), /studioIds/);
 });
