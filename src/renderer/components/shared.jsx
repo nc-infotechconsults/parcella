@@ -89,7 +89,7 @@ const Topbar = ({ title, crumb, actions }) => (
 
 const Modal = ({ open, onClose, title, children, footer, size = "md" }) => {
   if (!open) return null;
-  const sizeClass = size === "lg" ? "modal-lg" : size === "xl" ? "modal-xl" : "";
+  const sizeClass = { lg: "modal-lg", xl: "modal-xl", full: "modal-full" }[size] || "";
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className={"modal " + sizeClass} onClick={(e) => e.stopPropagation()}>

@@ -71,7 +71,7 @@ const InvoiceImportWizard = ({ open, onClose, onImported }) => {
   const acceptedCount = Object.values(decisions).filter(d => d.accept).length;
 
   return (
-    <Modal open={open} onClose={close} size="lg" title={t('imp.title')}
+    <Modal open={open} onClose={close} size="full" title={t('imp.title')}
       footer={step === 2
         ? <>
             <button className="btn" onClick={close}>{t('action.cancel')}</button>
@@ -114,6 +114,7 @@ const InvoiceImportWizard = ({ open, onClose, onImported }) => {
                 )}
               </div>
               {g.key === 'already' && <div className="hint" style={{ padding: '0 16px 8px' }}>{t('imp.alreadyHint')}</div>}
+              <div style={{ overflowX: "auto" }}>
               <table className="data">
                 <thead>
                   <tr>
@@ -197,12 +198,14 @@ const InvoiceImportWizard = ({ open, onClose, onImported }) => {
                   })}
                 </tbody>
               </table>
+              </div>
             </div>
           ))}
 
           {manifest.skipped.length > 0 && (
             <div className="card" style={{ marginTop: 16 }}>
               <div className="card-header"><strong>{t('imp.discarded')}</strong></div>
+              <div style={{ overflowX: "auto" }}>
               <table className="data">
                 <tbody>
                   {manifest.skipped.map((s, i) => (
@@ -210,6 +213,7 @@ const InvoiceImportWizard = ({ open, onClose, onImported }) => {
                   ))}
                 </tbody>
               </table>
+              </div>
             </div>
           )}
         </>
