@@ -699,7 +699,7 @@ module.exports = { TIPO_DOC, normalizeId, classify, dedupKey };
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `node --test tests/test-fattura-classify.js`
-Expected: PASS — 11 tests.
+Expected: PASS — 12 tests.
 
 Note: `normalizeId('IE1111111AA')` returns `IE1111111AA` unchanged (the `IT` rule only applies to Italian 11-digit VAT numbers), which is why the expected dedup key starts with `IE`.
 
@@ -1362,11 +1362,13 @@ Create `src/shared/categories.js`:
     [/\b(?:corso|corsi|formazion|training|webinar|certificazion)\w*/i, "Formazione"],
     [/\b(?:abbonament|licen[zc]|subscription|software|hosting|dominio|github|microsoft|adobe|figma)\w*|\b(?:saas|cloud)\b/i, "Software"],
     [/\b(?:telefon|fibra|connettivit)\w*|\b(?:mobile|sim|adsl)\b/i, "Telefonia"],
-    [/\b(?:energia|elettric|utenz|bolletta|bollette)\w*|\b(?:gas|acqua|enel|luce)\b/i, "Utenze"],
+    // 'acqua' alone is not a utility signal — bottled water is a beverage
+  // purchase, so utility matching keys on idric/acquedott instead.
+  [/\b(?:energia|elettric|utenz|bolletta|bollette|idric|acquedott)\w*|\b(?:gas|enel|luce)\b/i, "Utenze"],
     [/\b(?:commission)\w*|\b(?:spese bancarie|bollo c\/c|canone conto)\b/i, "Commissioni bancarie"],
     [/\b(?:consulen|notai|commercialist|avvocat|perizi)\w*/i, "Consulenze"],
     [/\b(?:albergh|pernottament)\w*|\b(?:hotel|albergo|b&b)\b/i, "Pernottamento"],
-    [/\b(?:ristorant|catering)\w*|\b(?:pranzo|pranzi|cena|cene|bar)\b/i, "Pasti"],
+    [/\b(?:ristorant|catering)\w*|\b(?:pranzo|pranzi|cena|cene|bar|menu|menù|coperto)\b/i, "Pasti"],
     [/\b(?:trasfert|bigliett|trenitalia)\w*|\b(?:treno|treni|italo|volo|voli|aereo|taxi)\b/i, "Trasferta"],
     [/\b(?:cancelleri|toner)\w*|\b(?:carta|ufficio)\b/i, "Cancelleria"],
     [/\b(?:polizz|assicurazion)\w*|\brc professionale\b/i, "Assicurazioni"],
@@ -1547,6 +1549,17 @@ test('category inference handles Italian inflections without over-matching', () 
   for (const [desc, wrong] of forbidden) assert.notEqual(guessCategory(desc), wrong, desc);
 });
 
+test('proposals match how the user\'s real invoices actually read', () => {
+  const { guessCategory } = require('../src/shared/categories');
+  // Line text taken verbatim from real Agenzia delle Entrate exports.
+  assert.equal(guessCategory('MENU A PREZZO FISSO Tavolo: 93'), 'Pasti');          // 75%, not 100%
+  assert.equal(guessCategory('acqua santo stefano 1\\2 lt x 24 bt pet'), 'Altro'); // a drink, not a water bill
+  assert.equal(guessCategory('Virtual Machines Bsv2 Series'), 'Altro');            // no signal in the line...
+  assert.equal(guessCategory('Microsoft Srl'), 'Software');                        // ...but the supplier has one
+  assert.equal(guessCategory('INTEGRAZIONE FATTURA N. 9BF DEL 21/08/2026'), 'Altro');
+  assert.equal(guessCategory('GITHUB INC'), 'Software');
+});
+
 test('buildManifest refuses to run without the studio identity', () => {
   assert.throws(() => buildManifest(base({ files: [file('passiva-td04-nota-credito.xml')], studioIds: [] })), /studioIds/);
 });
@@ -1615,10 +1628,14 @@ function proposeFiscal(doc, counterparty, supplierRules) {
       firstYearHalf: remembered.firstYearHalf !== false,
     };
   }
-  // Deliberately excludes counterparty.name: a trade name is an unreliable
-  // signal, and per-supplier treatment is already covered by supplierRules.
+  // Lines first: a description is direct evidence of what was bought, and it
+  // keeps the guess independent of a supplier's trade name. The name is a
+  // fallback only, for documents whose lines carry no signal by construction —
+  // a reverse-charge integration reads "INTEGRAZIONE FATTURA N. x DEL y", where
+  // the supplier is the only evidence there is.
   const text = [doc.causale, ...doc.lines.map(l => l.desc)].join(' ');
-  const category = guessCategory(text);
+  const fromLines = guessCategory(text);
+  const category = fromLines !== 'Altro' ? fromLines : guessCategory(counterparty.name || '');
   const rule = CATEGORY_RULES[category] || CATEGORY_RULES.Altro;
   const amortize = doc.totals.imponibile >= AMORTIZE_THRESHOLD && category === 'Hardware';
   return {
