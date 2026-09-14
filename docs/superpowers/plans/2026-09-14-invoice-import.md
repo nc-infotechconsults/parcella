@@ -3912,10 +3912,11 @@ In `src/renderer/i18n.js` (`it`, mirrored in `en`):
       'dash.toCollect': 'Da incassare',
       'dash.costsByCategory': 'Costi per categoria',
       'dash.upcoming': 'Prossime scadenze',
+      'dash.vatBalanceYear': 'Saldo IVA anno',
       'exp.invoiceHint': 'I costi documentati da fattura elettronica si gestiscono in Fatture.',
 ```
 
-English: `Invoiced revenue YTD`, `To collect`, `Costs by category`, `Upcoming due dates`, `Costs backed by an e-invoice are managed in Invoices.`
+English: `Invoiced revenue YTD`, `To collect`, `Costs by category`, `Upcoming due dates`, `VAT balance, year`, `Costs backed by an e-invoice are managed in Invoices.`
 
 - [ ] **Step 2: Add the KPIs and the scadenze list**
 
@@ -3942,7 +3943,7 @@ Add two KPIs to the existing grid:
         <div className="kpi">
           <div className="kpi-label">{t('dash.toCollect')}</div>
           <div className="kpi-value tabular">{fmtEUR(daIncassare)}</div>
-          <div className="kpi-meta"><span>IVA periodo {fmtEUR(fy.consuntivo.ivaSaldo)}</span></div>
+          <div className="kpi-meta"><span>{t('dash.vatBalanceYear')} {fmtEUR(fy.consuntivo.ivaSaldo)}</span></div>
         </div>
 ```
 
@@ -3953,6 +3954,9 @@ and, below the existing cards, the two new blocks:
         <div className="card-header"><strong>{t('dash.costsByCategory')}</strong></div>
         <table className="data">
           <tbody>
+            {Object.keys(fy.costiPerCategoria).length === 0 && (
+              <tr><td colSpan={2}><div className="empty-state"><div className="title">—</div></div></td></tr>
+            )}
             {Object.entries(fy.costiPerCategoria)
               .sort((a, b) => b[1] - a[1])
               .map(([cat, amount]) => (
@@ -4032,6 +4036,10 @@ const InvoicedForMonth = ({ client, monthKey, invoices, acts }) => {
         </div>
       ))}
       <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, padding: "6px 0 0", marginTop: 6, borderTop: "1px solid var(--border)" }}>
+        <span style={{ color: "var(--text-muted)" }}>Totale fatturato</span>
+        <span className="mono"><strong>{fmtEUR(invoiced)}</strong></span>
+      </div>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, padding: "3px 0" }}>
         <span style={{ color: "var(--text-muted)" }}>Lavoro registrato</span>
         <span className="mono">{fmtH(hours)}</span>
       </div>
