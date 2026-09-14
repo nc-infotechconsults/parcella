@@ -356,6 +356,15 @@
       'tax.description': 'Descrizione',
       'tax.amount': 'Importo',
       'tax.status': 'Stato',
+      'tax.invoiced': 'Fatturato',
+      'tax.forecast': 'Da fatturare',
+      'tax.assets': 'Cespiti & ammortamenti',
+      'tax.assetCost': 'Costo',
+      'tax.assetQuota': 'Quota anno',
+      'tax.assetResidual': 'Residuo',
+      'tax.assetYears': 'Anni',
+      'tax.reverseNeutral': 'Reverse charge (neutro)',
+      'tax.noAssets': 'Nessun cespite',
 
       // Settings
       'set.profile': 'Profilo studio',
@@ -781,6 +790,15 @@
       'tax.description': 'Description',
       'tax.amount': 'Amount',
       'tax.status': 'Status',
+      'tax.invoiced': 'Invoiced',
+      'tax.forecast': 'To invoice',
+      'tax.assets': 'Assets & depreciation',
+      'tax.assetCost': 'Cost',
+      'tax.assetQuota': 'Year quota',
+      'tax.assetResidual': 'Residual',
+      'tax.assetYears': 'Years',
+      'tax.reverseNeutral': 'Reverse charge (neutral)',
+      'tax.noAssets': 'No assets',
 
       // Settings
       'set.profile': 'Studio profile',

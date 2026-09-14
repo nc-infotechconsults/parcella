@@ -374,7 +374,7 @@ const App = () => {
             onEdit={setEditingInvoice} onDelete={handleDeleteInvoice} />}
           {view === "settings" && <Settings user={s} onSave={d => setStudio(d)} onResetData={handleResetData} />}
           {view === "taxes" && <Taxes activities={activities} expenses={expenses} fiscal={fiscal || window.APP_DATA.fiscal}
-            clients={clients} studio={s} year={year}
+            clients={clients} studio={s} invoices={invoices} year={year}
             onUpdateFiscal={f => setFiscal(f)} />}
         </div>
       </div>

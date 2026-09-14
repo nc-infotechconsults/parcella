@@ -2,13 +2,21 @@
 // Supporta: libero professionista, ditta individuale.
 // studio.tipoSoggetto: "professionista" | "ditta_individuale" | "societa"
 
-function computeTaxes(activities, expenses, fiscal, year, clients, studio) {
+function computeTaxes(activities, expenses, fiscal, year, clients, studio, invoices) {
   const _clients = clients || window.APP_DATA.clients;
   const tipo = (studio && studio.tipoSoggetto) || "professionista";
   const yr = String(year);
 
   const yearAct = activities.filter(a => a.monthKey.startsWith(yr + "-"));
   const yearExp = expenses.filter(e => e.monthKey.startsWith(yr + "-"));
+
+  // Invoices are accounting truth; the timesheet only covers what is not yet
+  // invoiced (spec §4.2). The previsionale block below reuses the existing
+  // per-month billing logic through computeFiscalYear.
+  const fy = window.computeFiscalYear({
+    year, invoices: invoices || [], activities, expenses, clients: _clients, fiscal,
+    computeInvoiceAmounts: window.computeInvoiceAmounts,
+  });
 
   // For non-hourly clients, pre-compute one billing entry per (clientId, monthKey).
   // This prevents monthly/project rates from being summed per-activity instead of per-month.
@@ -30,42 +38,20 @@ function computeTaxes(activities, expenses, fiscal, year, clients, studio) {
   })();
 
   // ── Ricavi ────────────────────────────────────────────────────────────────
-  const compensi =
-    yearAct.reduce((s, a) => {
-      const c = _clients.find(x => x.id === a.clientId);
-      if (!c || (c.billingType && c.billingType !== 'hourly')) return s;
-      return s + a.hours * c.hourlyRate;
-    }, 0) +
-    nonHourlyMonthBillings.reduce((s, b) => s + b.imponibile, 0);
+  const ricaviFatturati = fy.consuntivo.ricavi;
+  const ricaviPrevisionali = fy.previsionale.ricavi;
+  const compensi = ricaviFatturati + ricaviPrevisionali;
 
-  const ritenutaTrattenuta =
-    yearAct.reduce((s, a) => {
-      const c = _clients.find(x => x.id === a.clientId);
-      if (!c || !c.withholding || (c.billingType && c.billingType !== 'hourly')) return s;
-      return s + a.hours * c.hourlyRate * 0.20;
-    }, 0) +
-    nonHourlyMonthBillings.filter(b => b.c.withholding).reduce((s, b) => s + b.withholding, 0);
-  const compensiConRit =
-    yearAct.reduce((s, a) => {
-      const c = _clients.find(x => x.id === a.clientId);
-      if (!c || !c.withholding || (c.billingType && c.billingType !== 'hourly')) return s;
-      return s + a.hours * c.hourlyRate;
-    }, 0) +
-    nonHourlyMonthBillings.filter(b => b.c.withholding).reduce((s, b) => s + b.imponibile, 0);
+  const ritenutaTrattenuta = fy.consuntivo.ritenutaSubita;
+  const compensiConRit = ricaviFatturati;      // withholding only ever applies to issued invoices
   const compensiSenzaRit = compensi - compensiConRit;
 
   // ── IVA ───────────────────────────────────────────────────────────────────
-  const ivaDebito =
-    yearAct.reduce((s, a) => {
-      const c = _clients.find(x => x.id === a.clientId);
-      if (!c || (c.billingType && c.billingType !== 'hourly')) return s;
-      return s + a.hours * c.hourlyRate * (c.vatPct || 0) / 100;
-    }, 0) +
-    nonHourlyMonthBillings.reduce((s, b) => s + b.iva, 0);
-  const ivaCredito = yearExp.filter(e => !e.billable).reduce((s, e) => s + computeExpenseFiscals(e).vatDetracted, 0);
+  const ivaDebito = fy.consuntivo.ivaDebito;
+  const ivaCredito = fy.consuntivo.ivaCredito;
 
   // ── Costi deducibili ──────────────────────────────────────────────────────
-  const costiDeducibili = yearExp.filter(e => !e.billable).reduce((s, e) => s + computeExpenseFiscals(e).yearlyDeducted, 0);
+  const costiDeducibili = fy.consuntivo.costiDeducibili;
 
   // ── Contributi previdenziali ──────────────────────────────────────────────
   const reddNettoLordoCassa = Math.max(0, compensi - costiDeducibili);
@@ -114,27 +100,17 @@ function computeTaxes(activities, expenses, fiscal, year, clients, studio) {
     { id: "Q4", label: "4° trim (ott-dic)", deadline: "16 marzo anno succ.", months: ["10","11","12"], paid: fiscal.ivaQ4Paid },
   ];
   const trimestri = ivaDeadlines.map(qt => {
-    const debit =
-      yearAct.filter(a => qt.months.includes(a.monthKey.split("-")[1])).reduce((s, a) => {
-        const c = _clients.find(x => x.id === a.clientId);
-        if (!c || (c.billingType && c.billingType !== 'hourly')) return s;
-        return s + a.hours * c.hourlyRate * (c.vatPct || 0) / 100;
-      }, 0) +
-      nonHourlyMonthBillings
-        .filter(b => qt.months.includes(b.monthKey.split("-")[1]))
-        .reduce((s, b) => s + b.iva, 0);
-    const credit = yearExp.filter(e => !e.billable && qt.months.includes(e.monthKey.split("-")[1]))
-      .reduce((s, e) => s + computeExpenseFiscals(e).vatDetracted, 0);
-    const wh =
-      yearAct.filter(a => qt.months.includes(a.monthKey.split("-")[1])).reduce((s, a) => {
-        const c = _clients.find(x => x.id === a.clientId);
-        if (!c || !c.withholding || (c.billingType && c.billingType !== 'hourly')) return s;
-        return s + a.hours * c.hourlyRate * 0.20;
-      }, 0) +
-      nonHourlyMonthBillings
-        .filter(b => b.c.withholding && qt.months.includes(b.monthKey.split("-")[1]))
-        .reduce((s, b) => s + b.withholding, 0);
-    return { ...qt, debit, credit, balance: debit - credit, withholding: wh };
+    const period = fy.periods.find(p => p.id === qt.id) || { ivaDebito: 0, ivaCredito: 0, ivaReverse: 0, saldo: 0 };
+    return {
+      ...qt,
+      debit: period.ivaDebito,
+      credit: period.ivaCredito,
+      reverse: period.ivaReverse,
+      saldo: period.saldo,
+      // The F24 generator below reads `balance`; the liquidation saldo is what
+      // actually gets paid, so it keeps that name too.
+      balance: period.saldo,
+    };
   });
 
   // ── Scadenze F24 dinamiche ────────────────────────────────────────────────
@@ -219,16 +195,19 @@ function computeTaxes(activities, expenses, fiscal, year, clients, studio) {
     irpefNetta,
     irpefTot: irpefNetta,
     trimestri,
+    fy,
+    ricaviFatturati,
+    ricaviPrevisionali,
     f24All,        // scadenze generate + manuali
     totaleAnno,
   };
 }
 window.computeTaxes = computeTaxes;
 
-const Taxes = ({ activities, expenses, fiscal, clients, studio, year: taxYear, onUpdateFiscal }) => {
+const Taxes = ({ activities, expenses, fiscal, clients, studio, invoices, year: taxYear, onUpdateFiscal }) => {
   const [tab, setTab] = useState("overview");
   const fiscalYear = String(taxYear || new Date().getFullYear());
-  const tax = computeTaxes(activities, expenses, fiscal, fiscalYear, clients, studio);
+  const tax = computeTaxes(activities, expenses, fiscal, fiscalYear, clients, studio, invoices);
   const today = new Date();
 
   // F24 paid/scheduled
@@ -243,12 +222,20 @@ const Taxes = ({ activities, expenses, fiscal, clients, studio, year: taxYear, o
   return (
     <div className="content">
       {/* Hero KPIs */}
-      <div className="kpi-grid" style={{ gridTemplateColumns: "repeat(4, 1fr)" }}>
+      <div className="kpi-grid" style={{ gridTemplateColumns: "repeat(5, 1fr)" }}>
         <div className="kpi" style={{ borderLeft: "3px solid var(--accent)" }}>
           <div className="kpi-label">Stima carico fiscale {fiscalYear}</div>
           <div className="kpi-value tabular">{fmtEUR(tax.totaleAnno)}</div>
           <div className="kpi-meta">
             <span>{tax.compensi > 0 ? ((tax.totaleAnno / tax.compensi) * 100).toFixed(1) : 0}% sui compensi</span>
+          </div>
+        </div>
+        <div className="kpi">
+          <div className="kpi-label">{t('dash.revenue')} {fiscalYear}</div>
+          <div className="kpi-value tabular">{fmtEUR(tax.compensi)}</div>
+          <div className="kpi-meta">
+            <span>{t('tax.invoiced')} {fmtEUR(tax.ricaviFatturati)}</span>
+            <span> · {t('tax.forecast')} {fmtEUR(tax.ricaviPrevisionali)}</span>
           </div>
         </div>
         <div className="kpi">
@@ -285,6 +272,7 @@ const Taxes = ({ activities, expenses, fiscal, clients, studio, year: taxYear, o
           <button className={tab === "irap" ? "active" : ""} onClick={() => setTab("irap")}>IRAP</button>
         )}
         <button className={tab === "f24" ? "active" : ""} onClick={() => setTab("f24")}>Calendario F24</button>
+        <button className={tab === "assets" ? "active" : ""} onClick={() => setTab("assets")}>{t('tax.assets')}</button>
       </div>
 
       {tab === "overview" && (
@@ -304,6 +292,37 @@ const Taxes = ({ activities, expenses, fiscal, clients, studio, year: taxYear, o
       )}
       {tab === "f24" && (
         <TaxF24 fiscal={fiscal} tax={tax} fiscalYear={fiscalYear} onUpdateFiscal={onUpdateFiscal} />
+      )}
+      {tab === "assets" && (
+        <div className="card">
+          <table className="data">
+            <thead>
+              <tr>
+                <th>{t('inv.asset')}</th>
+                <th style={{ width: 100 }}>{t('inv.date')}</th>
+                <th className="num" style={{ width: 110 }}>{t('tax.assetCost')}</th>
+                <th className="num" style={{ width: 70 }}>{t('tax.assetYears')}</th>
+                <th className="num" style={{ width: 110 }}>{t('tax.assetQuota')}</th>
+                <th className="num" style={{ width: 110 }}>{t('tax.assetResidual')}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {tax.fy.cespiti.length === 0 && (
+                <tr><td colSpan={6}><div className="empty-state"><div className="title">{t('tax.noAssets')}</div></div></td></tr>
+              )}
+              {tax.fy.cespiti.map(c => (
+                <tr key={c.id}>
+                  <td>{c.desc}</td>
+                  <td className="mono">{c.date}</td>
+                  <td className="num mono">{fmtEUR(c.cost)}</td>
+                  <td className="num mono">{c.years}{c.firstYearHalf ? "½" : ""}</td>
+                  <td className="num mono"><strong>{fmtEUR(c.quotaYear)}</strong></td>
+                  <td className="num mono">{fmtEUR(c.residual)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );
@@ -452,6 +471,7 @@ const TaxIVA = ({ tax, fiscal, fiscalYear }) => (
           <th>Scadenza</th>
           <th className="num">IVA a debito</th>
           <th className="num">IVA a credito</th>
+          <th className="num">{t('tax.reverseNeutral')}</th>
           <th className="num">Saldo da versare</th>
           <th>Stato</th>
         </tr>
@@ -463,6 +483,9 @@ const TaxIVA = ({ tax, fiscal, fiscalYear }) => (
             <td className="mono">{q.deadline}</td>
             <td className="num mono">{fmtEUR(q.debit)}</td>
             <td className="num mono" style={{ color: "var(--success)" }}>−{fmtEUR(q.credit)}</td>
+            <td className="num mono" style={{ color: "var(--text-muted)" }} title={t('tax.reverseNeutral')}>
+              {fmtEUR(q.reverse)}
+            </td>
             <td className="num mono"><strong>{fmtEUR(Math.max(0, q.balance))}</strong></td>
             <td>
               {q.paid
@@ -479,6 +502,7 @@ const TaxIVA = ({ tax, fiscal, fiscalYear }) => (
           <td colSpan={2}>Totale anno</td>
           <td className="num mono">{fmtEUR(tax.ivaDebito)}</td>
           <td className="num mono">−{fmtEUR(tax.ivaCredito)}</td>
+          <td className="num mono" style={{ color: "var(--text-muted)" }}>{fmtEUR(tax.fy.consuntivo.ivaReverse)}</td>
           <td className="num mono">{fmtEUR(tax.ivaSaldo)}</td>
           <td></td>
         </tr>
