@@ -216,7 +216,7 @@ const InvoiceDrawer = ({ invoice, clients, onSave, onClose }) => {
       </table>
 
       <table className="data" style={{ marginTop: 12 }}>
-        <thead><tr><th>{t('inv.line')}</th><th className="num">{t('inv.vat')}</th><th className="num">{t('inv.taxable')}</th><th className="num">{t('inv.vat')}</th></tr></thead>
+        <thead><tr><th>{t('inv.line')}</th><th className="num">{t('inv.vat')}</th><th className="num">{t('inv.taxable')}</th><th className="num">{t('inv.taxAmount')}</th></tr></thead>
         <tbody>
           {invoice.lines.map(l => (
             <tr key={l.n}><td>{l.desc}</td><td className="num mono">{l.vatPct != null ? l.vatPct + "%" : l.natura}</td>
