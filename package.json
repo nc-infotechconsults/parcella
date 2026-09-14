@@ -98,6 +98,7 @@
   },
   "dependencies": {
     "better-sqlite3": "^12.9.0",
+    "fast-xml-parser": "^5.11.1",
     "keytar": "^7.9.0"
   }
 }
