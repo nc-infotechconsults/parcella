@@ -1032,7 +1032,7 @@ module.exports = { unwrap, extractP7M, readZip };
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `node --test tests/test-fattura-unwrap.js`
-Expected: PASS — 10 tests.
+Expected: PASS — 9 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -2292,7 +2292,7 @@ Create `src/renderer/fiscal.js`:
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `node --test tests/test-fiscal-expense.js`
-Expected: PASS — 9 tests.
+Expected: PASS — 10 tests.
 
 - [ ] **Step 5: Load the new files in the renderer**
 
