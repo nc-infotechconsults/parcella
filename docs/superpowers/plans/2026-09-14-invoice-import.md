@@ -1912,6 +1912,37 @@ In `src/main/preload.js`, inside the `contextBridge.exposeInMainWorld('api', { .
   },
 ```
 
+- [ ] **Step 3b: Bring the JSON fallback to parity**
+
+`main.js` falls back to `src/main/db-json.js` whenever `better-sqlite3` fails to
+load (a native ABI mismatch after an Electron upgrade is the usual cause). That
+fallback predates this feature and knows nothing about invoices — and critically
+it has **no `getKV` method**, so `studioIdentity()` would throw
+`db.getKV is not a function` and the import wizard would fail outright on any
+machine using it. Four small changes give it parity:
+
+```js
+// 1. default shape — so loadAll() returns [] / {} rather than undefined
+    this._data = { clients: [], activities: [], expenses: [], invoices: [], studio: null, fiscal: null, supplierRules: {} };
+
+// 2. the missing reader used by the invoice IPC handlers
+  getKV(key) {
+    return this._data[key] !== undefined ? this._data[key] : null;
+  }
+
+// 3. a database holding only invoices is not a fresh install
+        this._empty = this._data.clients.length === 0
+          && (this._data.invoices || []).length === 0
+          && !this._data.studio;
+
+// 4. stats() reports invoices alongside the other collections
+      invoices:   (this._data.invoices || []).length,
+```
+
+`saveCollection` and `saveKV` are already generic, so invoices and
+`supplierRules` persist through them unchanged; `exportJSON`/`importJSON`
+serialize `_data` wholesale and inherit both automatically.
+
 - [ ] **Step 4: Verify the app still boots**
 
 Run: `npm start`
