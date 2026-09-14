@@ -2920,16 +2920,23 @@ In `src/renderer/i18n.js`, add to the `it` block (next to the other `nav.*` keys
       'inv.withholdingRow': 'Ritenuta',
       'inv.cassaRow': 'Cassa',
       'inv.line': 'Riga',
+      'inv.taxAmount': 'Imposta',
       'inv.summaryRow': 'Riepilogo',
       'inv.settlementDate': 'Data saldo',
       'inv.notes': 'Note',
 ```
 
-English values: `Invoices`, `Active`, `Passive`, `VAT registers`, `Import invoices`, `Number`, `Date`, `Counterparty`, `Taxable`, `VAT`, `Total`, `Status`, `To collect`, `To pay`, `Collected`, `Paid`, `Mark as settled`, `Reverse charge`, `Credit note`, `Asset`, `To review`, `Invoice data (read-only)`, `Classification`, `Category`, `Deductible %`, `Deductible VAT %`, `Amortization years`, `Client`, `Timesheet month`, `Open original XML`, `No invoices imported`, `Import your e-invoices to work from real revenue, costs and VAT.`, `Invoiced revenue`, `Costs from invoices`, `VAT payable`, `VAT deductible`, `of which reverse`, `active invoices`, `passive invoices`, `balance`, `All quarters`, `Period`, `Balance`, `Document type`, `Withholding`, `Pension fund`, `Line`, `Summary`, `Settlement date`, `Notes`
+English values: `Invoices`, `Sales`, `Purchases`, `VAT registers`, `Import invoices`, `Number`, `Date`, `Counterparty`, `Taxable`, `VAT`, `Total`, `Status`, `To collect`, `To pay`, `Collected`, `Paid`, `Mark as settled`, `Reverse charge`, `Credit note`, `Asset`, `To review`, `Invoice data (read-only)`, `Classification`, `Category`, `Deductible %`, `Deductible VAT %`, `Amortization years`, `Client`, `Timesheet month`, `Open original XML`, `No invoices imported`, `Import your e-invoices to work from real revenue, costs and VAT.`, `Invoiced revenue`, `Costs from invoices`, `VAT payable`, `VAT recoverable`, `of which reverse`, `sales invoices`, `purchase invoices`, `balance`, `All quarters`, `Period`, `Balance`, `Document type`, `Withholding`, `Pension fund`, `Line`, `Tax amount`, `Summary`, `Settlement date`, `Notes`
 
 Every one of these must exist under BOTH `it` and `en`: the app has a live
 language switcher, so a hardcoded Italian string leaves the screen half
 translated for an English user.
+
+**Terminology note, deliberate:** *fatture attive / passive* are false friends —
+in English accounting they are **sales** and **purchase** invoices, never
+"active"/"passive". And `inv.vatCredit` is "VAT **recoverable**", not "VAT
+deductible", because the screen already carries `inv.vatDetractPct` = "Deductible
+VAT %", a per-cost percentage; two different figures must not share a word.
 
 - [ ] **Step 2: Add the Sidebar entry**
 
@@ -3254,7 +3261,7 @@ const InvoiceDrawer = ({ invoice, clients, onSave, onClose }) => {
       </table>
 
       <table className="data" style={{ marginTop: 12 }}>
-        <thead><tr><th>{t('inv.line')}</th><th className="num">{t('inv.vat')}</th><th className="num">{t('inv.taxable')}</th><th className="num">{t('inv.vat')}</th></tr></thead>
+        <thead><tr><th>{t('inv.line')}</th><th className="num">{t('inv.vat')}</th><th className="num">{t('inv.taxable')}</th><th className="num">{t('inv.taxAmount')}</th></tr></thead>
         <tbody>
           {invoice.lines.map(l => (
             <tr key={l.n}><td>{l.desc}</td><td className="num mono">{l.vatPct != null ? l.vatPct + "%" : l.natura}</td>
