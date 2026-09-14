@@ -560,6 +560,22 @@ test('a document involving neither party is flagged for review', () => {
   assert.match(c.reviewReason, /nessuna delle parti/i);
 });
 
+test('a reverse-charge document belonging to nobody we know is still flagged', () => {
+  const c = classify(load('autofattura-td18-signed.xml'), ['99999999999']);
+  assert.equal(c.direction, 'passive');
+  assert.equal(c.reverseCharge, true);
+  assert.equal(c.needsReview, true);
+  assert.match(c.reviewReason, /nessuna delle parti/i);
+});
+
+test('a document with the studio on both sides is flagged', () => {
+  const doc = load('attiva-td01-ritenuta-cassa.xml');
+  doc.cessionario = { ...doc.cessionario, vat: fixtures.STUDIO.piva, cf: fixtures.STUDIO.cf };
+  const c = classify(doc, STUDIO);
+  assert.equal(c.needsReview, true);
+  assert.match(c.reviewReason, /sia cedente sia cessionario/i);
+});
+
 test('classify requires the studio identity', () => {
   assert.throws(() => classify(load('passiva-td01-multirate.xml'), []), /studioIds/);
 });
@@ -629,7 +645,16 @@ function classify(doc, studioIds) {
   let reviewReason = null;
 
   if (rule && rule.forcePassive) {
+    // Self-invoices record a purchase even though the studio issues them, so
+    // TipoDocumento wins over party matching. The studio must still appear
+    // SOMEWHERE on the document: if it appears nowhere, the file belongs to
+    // someone else and is not ours to book. "Both parties" is deliberately not
+    // flagged here — TD21 (splafonamento) legitimately has exactly that shape.
     direction = 'passive';
+    if (!studioIsCedente && !studioIsCessionario) {
+      needsReview = true;
+      reviewReason = 'Lo studio non è nessuna delle parti del documento';
+    }
   } else if (studioIsCedente && !studioIsCessionario) {
     direction = 'active';
   } else if (studioIsCessionario && !studioIsCedente) {
@@ -645,7 +670,10 @@ function classify(doc, studioIds) {
 
   if (!rule) {
     needsReview = true;
-    reviewReason = `TipoDocumento ${doc.tipoDoc || '(assente)'} non riconosciuto`;
+    // Append rather than overwrite: a document can be both unrecognised AND
+    // unrelated to the studio, and the reviewer needs to see both reasons.
+    reviewReason = [reviewReason, `TipoDocumento ${doc.tipoDoc || '(assente)'} non riconosciuto`]
+      .filter(Boolean).join('; ');
   }
 
   return {
@@ -671,7 +699,7 @@ module.exports = { TIPO_DOC, normalizeId, classify, dedupKey };
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `node --test tests/test-fattura-classify.js`
-Expected: PASS — 8 tests.
+Expected: PASS — 10 tests.
 
 Note: `normalizeId('IE1111111AA')` returns `IE1111111AA` unchanged (the `IT` rule only applies to Italian 11-digit VAT numbers), which is why the expected dedup key starts with `IE`.
 
