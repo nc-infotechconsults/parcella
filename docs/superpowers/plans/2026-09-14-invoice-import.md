@@ -1196,7 +1196,9 @@ and after the existing indexes add:
 In `loadAll()`, after the `expenses` line add:
 
 ```js
-    const invoices   = this.db.prepare('SELECT data FROM invoices ORDER BY date(json_extract(data,"$.date")), rowid').all().map(r => JSON.parse(r.data));
+    // Single quotes around the JSON path are required: SQLite 3.53 treats a
+    // double-quoted token as an identifier, so "$.date" raises "no such column".
+    const invoices   = this.db.prepare("SELECT data FROM invoices ORDER BY date(json_extract(data,'$.date')), rowid").all().map(r => JSON.parse(r.data));
 ```
 
 and add `supplierRules` next to the other kv reads:
