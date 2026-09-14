@@ -2189,8 +2189,8 @@ Create `src/renderer/fiscal.js`:
     const sign = inv.sign || 1;
     const imponibile = round2(sign * (inv.totals.imponibile || 0));
     const imposta = round2(sign * (inv.totals.imposta || 0));
-    // A credit note is never a cespite: sign < 0 reverses an acquisition, so it
-    // belongs on the ordinary cost path and must reduce, not extend, deduction.
+    // A credit note is a return, not an acquisition: it must remove cost now,
+    // never open (or top up) an amortization schedule.
     const inAmortization = !!f.amortize && sign > 0;
     return {
       imponibile,
