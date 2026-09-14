@@ -3462,7 +3462,10 @@ const InvoiceImportWizard = ({ open, onClose, onImported }) => {
           clientId: it.proposal.clientId,
           linkedMonthKey: it.proposal.linkedMonthKey,
           fiscal: it.proposal.fiscal,
-          rememberSupplier: it.direction === 'passive',
+          // Pre-armed for a confident proposal, deliberately NOT for one flagged
+          // for review: remembering a rule the user never actually looked at is
+          // how a wrong category becomes permanent.
+          rememberSupplier: it.direction === 'passive' && !it.needsReview,
         };
       });
       setDecisions(initial);
@@ -3574,7 +3577,19 @@ const InvoiceImportWizard = ({ open, onClose, onImported }) => {
                               onChange={e => {
                                 const cat = e.target.value;
                                 const r = window.CATEGORY_RULES[cat];
-                                setDecision(it.id, { fiscal: { ...d.fiscal, category: cat, deductPct: r ? r.deductPct : 100 } });
+                                // Recompute the cespite decision, not only the category: this row
+                                // exists to correct a wrong guess, and a stale `amortize` would
+                                // either capitalise a non-asset or expense a real one in full.
+                                // Mirrors proposeFiscal, including its credit-note guard.
+                                const amortize = (it.doc.sign || 1) > 0
+                                  && cat === 'Hardware'
+                                  && it.doc.totals.imponibile >= window.AMORTIZE_THRESHOLD;
+                                setDecision(it.id, { fiscal: {
+                                  ...d.fiscal, category: cat, deductPct: r ? r.deductPct : 100,
+                                  amortize,
+                                  amortYears: amortize ? (d.fiscal.amortYears || 4) : null,
+                                  firstYearHalf: amortize,
+                                } });
                               }}>
                               {Object.keys(window.CATEGORY_RULES).map(c => <option key={c} value={c}>{c}</option>)}
                             </select>
@@ -3631,7 +3646,7 @@ const InvoiceImportWizard = ({ open, onClose, onImported }) => {
 
       {step === 3 && result && (
         <div className="empty-state">
-          <div className="title">{t('imp.done').replace('{n}', result.records.length)}</div>
+          <div className="title">{t('imp.done', { n: result.records.length })}</div>
         </div>
       )}
     </Modal>
@@ -3657,7 +3672,7 @@ Add the commit handler and mount the wizard next to the other modals:
       return Array.from(byId.values());
     });
     if (rules) setSupplierRules(rules);
-    window.showToast(`Importate ${records.length} fatture`, 'success');
+    window.showToast(t('imp.done', { n: records.length }), 'success');
   };
 ```
 
