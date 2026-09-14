@@ -115,6 +115,38 @@ test('reads every XML entry out of a zip, ignoring other files', () => {
   assert.deepEqual(out.map(o => o.name).sort(), ['a.xml', 'sub/b.xml']);
 });
 
+// A real Agenzia delle Entrate .p7m opens `30 80` — BER indefinite length — and
+// carries its eContent as a CONSTRUCTED OCTET STRING split into 1000-byte
+// chunks. Definite-length DER with one primitive OCTET STRING, which the other
+// builder emits, never exercises either path.
+function buildBerP7M(xml, chunkSize) {
+  const eoc = Buffer.from([0x00, 0x00]);
+  const indef = (tag, payload) => Buffer.concat([Buffer.from([tag, 0x80]), payload, eoc]);
+  const body = Buffer.from(xml, 'utf-8');
+  const chunks = [];
+  for (let i = 0; i < body.length; i += chunkSize) {
+    chunks.push(der(0x04, body.subarray(i, i + chunkSize)));
+  }
+  const content = indef(0x24, Buffer.concat(chunks));          // constructed OCTET STRING
+  const oidData = Buffer.from([0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x07, 0x01]);
+  const encap = indef(0x30, Buffer.concat([oidData, indef(0xa0, content)]));
+  const oidSigned = Buffer.from([0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x07, 0x02]);
+  const signedData = indef(0x30, Buffer.concat([der(0x02, Buffer.from([0x01])), der(0x31, Buffer.alloc(13)), encap]));
+  return indef(0x30, Buffer.concat([oidSigned, indef(0xa0, signedData)]));
+}
+
+test('extracts the payload from a BER indefinite-length p7m', () => {
+  const xml = fixtures.read('autofattura-td18-signed.xml');
+  assert.equal(extractP7M(buildBerP7M(xml, 1000)), xml);
+});
+
+test('reassembles an eContent split across OCTET STRING chunks', () => {
+  const xml = fixtures.read('passiva-td01-multirate.xml');
+  // small chunks so the payload is split many times over
+  assert.equal(extractP7M(buildBerP7M(xml, 64)), xml);
+  assert.equal(extractP7M(buildBerP7M(xml, 7)), xml);
+});
+
 test('rejects a p7m with no XML content', () => {
   assert.throws(() => extractP7M(Buffer.from([0x30, 0x03, 0x02, 0x01, 0x01])), /XML non trovato/);
 });

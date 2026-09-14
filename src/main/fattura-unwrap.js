@@ -8,43 +8,87 @@ const zlib = require('zlib');
 // DER looking for the payload rather than verifying the signature: validity
 // is the SDI's job, ours is only to read what was filed.
 
-function readTLV(buf, pos) {
-  if (pos + 2 > buf.length) return null;
+// BER, not just DER: a real Agenzia delle Entrate .p7m opens `30 80` —
+// indefinite length — and carries its eContent as a CONSTRUCTED OCTET STRING
+// (tag 0x24) split into 1000-byte chunks. Both are ordinary output from a
+// streaming CAdES signer, and neither appears in definite-length DER.
+function readTLV(buf, pos, limit) {
+  if (pos + 2 > limit) return null;
   const tag = buf[pos];
-  let lenByte = buf[pos + 1];
+  const lenByte = buf[pos + 1];
   let headerLen = 2;
   let len;
-  if (lenByte & 0x80) {
+  let indefinite = false;
+
+  if (lenByte === 0x80) {
+    indefinite = true;                 // runs until a matching end-of-contents
+    len = -1;
+  } else if (lenByte & 0x80) {
     const count = lenByte & 0x7f;
-    if (count === 0 || pos + 2 + count > buf.length) return null;  // indefinite/invalid
+    if (count === 0 || pos + 2 + count > limit) return null;
     len = 0;
-    for (let i = 0; i < count; i++) len = (len << 8) | buf[pos + 2 + i];
+    for (let i = 0; i < count; i++) len = (len * 256) + buf[pos + 2 + i];
     headerLen = 2 + count;
   } else {
     len = lenByte;
   }
+
   const start = pos + headerLen;
-  if (start + len > buf.length) return null;
-  return { tag, start, len, end: start + len };
+  if (!indefinite && start + len > limit) return null;
+  return {
+    tag, start, len, indefinite,
+    end: indefinite ? limit : start + len,
+    constructed: (tag & 0x20) !== 0,
+  };
 }
 
 const XML_HEAD = Buffer.from('<?xml', 'utf-8');
+const isEOC = (buf, pos) => buf[pos] === 0x00 && buf[pos + 1] === 0x00;
 
-function findXmlInDER(buf, depth = 0) {
-  if (depth > 12) return null;
-  let pos = 0;
-  while (pos < buf.length) {
-    const tlv = readTLV(buf, pos);
+// Concatenates the primitive OCTET STRING chunks inside a constructed one.
+function joinOctets(buf, start, limit, depth) {
+  if (depth > 8) return Buffer.alloc(0);
+  const parts = [];
+  let pos = start;
+  while (pos + 1 < limit) {
+    if (isEOC(buf, pos)) break;                    // the chunk run ends here
+    const tlv = readTLV(buf, pos, limit);
+    if (!tlv) break;
+    if (tlv.tag === 0x04) parts.push(buf.subarray(tlv.start, tlv.end));
+    else if (tlv.tag === 0x24) parts.push(joinOctets(buf, tlv.start, tlv.end, depth + 1));
+    else break;                                    // anything else is not our payload
+    if (tlv.indefinite) break;
+    pos = tlv.end;
+  }
+  return Buffer.concat(parts);
+}
+
+function findXmlInDER(buf, start, limit, depth) {
+  if (depth === undefined) { start = 0; limit = buf.length; depth = 0; }
+  if (depth > 16) return null;
+  let pos = start;
+  while (pos + 1 < limit) {
+    if (isEOC(buf, pos)) { pos += 2; continue; }
+    const tlv = readTLV(buf, pos, limit);
     if (!tlv) return null;
-    const body = buf.subarray(tlv.start, tlv.end);
-    const constructed = (tlv.tag & 0x20) !== 0;
-    if (tlv.tag === 0x04 && body.indexOf(XML_HEAD) !== -1) {
-      return body.subarray(body.indexOf(XML_HEAD)).toString('utf-8');
-    }
-    if (constructed) {
-      const found = findXmlInDER(body, depth + 1);
+
+    if (tlv.tag === 0x04) {
+      const body = buf.subarray(tlv.start, tlv.end);
+      const i = body.indexOf(XML_HEAD);
+      if (i !== -1) return body.subarray(i).toString('utf-8');
+    } else if (tlv.tag === 0x24) {
+      const joined = joinOctets(buf, tlv.start, tlv.end, 0);
+      const i = joined.indexOf(XML_HEAD);
+      if (i !== -1) return joined.subarray(i).toString('utf-8');
+    } else if (tlv.constructed) {
+      const found = findXmlInDER(buf, tlv.start, tlv.end, depth + 1);
       if (found) return found;
     }
+
+    // An indefinite element's end is only known by scanning its children, which
+    // the recursion above has already done; its siblings lie past a boundary we
+    // cannot cheaply compute, and the search covered the rest of the buffer.
+    if (tlv.indefinite) return null;
     pos = tlv.end;
   }
   return null;
