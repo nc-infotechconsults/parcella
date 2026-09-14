@@ -3971,9 +3971,14 @@ and, below the existing cards, the two new blocks:
                 <td className="mono">{s.date}</td>
                 <td>{s.counterparty}</td>
                 <td>
-                  <span className={"badge badge-dot " + (s.direction === 'active' ? 'badge-success' : '')}>
-                    {s.direction === 'active' ? t('inv.open') : t('inv.openPassive')}
-                  </span>
+                  {/* A credit note carries a negative amount, so labelling it
+                      "da pagare" reads as a payment you owe. Name it for what
+                      it is instead. */}
+                  {s.amount < 0
+                    ? <span className="badge badge-warning badge-dot">{t('inv.creditNote')}</span>
+                    : <span className={"badge badge-dot " + (s.direction === 'active' ? 'badge-success' : '')}>
+                        {s.direction === 'active' ? t('inv.open') : t('inv.openPassive')}
+                      </span>}
                 </td>
                 <td className="num mono">{fmtEUR(s.amount)}</td>
               </tr>
