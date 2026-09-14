@@ -3578,11 +3578,22 @@ const InvoiceImportWizard = ({ open, onClose, onImported }) => {
                               {Object.keys(window.CATEGORY_RULES).map(c => <option key={c} value={c}>{c}</option>)}
                             </select>
                           ) : (
-                            <select className="select" value={d.clientId || ''}
-                              onChange={e => setDecision(it.id, { clientId: e.target.value || null })}>
-                              <option value="">— cliente —</option>
-                              {(window.__clients || []).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                            </select>
+                            <div style={{ display: 'flex', gap: 6 }}>
+                              <select className="select" value={d.clientId || ''}
+                                onChange={e => setDecision(it.id, { clientId: e.target.value || null })}>
+                                <option value="">— cliente —</option>
+                                {(window.__clients || []).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                              </select>
+                              {/* The covered month is proposed from the document date, which is
+                                  right when you invoice at month end and wrong when you invoice
+                                  August 5th for July's work. It decides whether that month's
+                                  timesheet still counts as "to invoice", so it is correctable
+                                  here rather than buried in the detail drawer. */}
+                              <input className="input mono" style={{ width: 96 }} placeholder="2026-07"
+                                title={t('inv.linkedMonth')}
+                                value={d.linkedMonthKey || ''}
+                                onChange={e => setDecision(it.id, { linkedMonthKey: e.target.value || null })} />
+                            </div>
                           )}
                         </td>
                         <td>
