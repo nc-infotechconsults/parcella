@@ -7,6 +7,7 @@ async function dbLoadAll() {
     clients:    AppStorage.load(AppStorage.KEYS.clients, null),
     activities: AppStorage.load(AppStorage.KEYS.activities, null),
     expenses:   AppStorage.load(AppStorage.KEYS.expenses, null),
+    invoices:   AppStorage.load(AppStorage.KEYS.invoices, null),
     studio:     AppStorage.load(AppStorage.KEYS.studio, null),
     fiscal:     AppStorage.load(AppStorage.KEYS.fiscal, null),
     empty:      !AppStorage.load(AppStorage.KEYS.clients, null),
@@ -15,7 +16,7 @@ async function dbLoadAll() {
 
 function dbSave(key, data) {
   if (window.api?.db) {
-    const isKV = key === 'studio' || key === 'fiscal';
+    const isKV = key === 'studio' || key === 'fiscal' || key === 'supplierRules';
     (isKV ? window.api.db.saveKV(key, data) : window.api.db.saveCollection(key, data)).catch(console.error);
   } else {
     AppStorage.save(AppStorage.KEYS[key] || key, data);
@@ -111,6 +112,10 @@ const App = () => {
   const [clients, setClients] = useState([]);
   const [activities, setActivities] = useState([]);
   const [expenses, setExpenses] = useState([]);
+  const [invoices, setInvoices] = useState([]);
+  const [supplierRules, setSupplierRules] = useState({});
+  const [importOpen, setImportOpen] = useState(false);
+  const [editingInvoice, setEditingInvoice] = useState(null);
   const [studio, setStudio] = useState(null);
   const [fiscal, setFiscal] = useState(null);
 
@@ -130,6 +135,8 @@ const App = () => {
       setClients(data.clients    || []);
       setActivities(data.activities || []);
       setExpenses(data.expenses  || []);
+      setInvoices(data.invoices || []);
+      setSupplierRules(data.supplierRules || {});
       setStudio(data.studio    || window.APP_DATA.user);
       setFiscal(data.fiscal    || window.APP_DATA.fiscal);
       setLoaded(true);
@@ -142,12 +149,14 @@ const App = () => {
     setClients(d.clients);
     setActivities(d.activities);
     setExpenses(d.expenses);
+    setInvoices([]);
     setStudio(d.user);
     setFiscal(d.fiscal);
     if (window.api?.db) {
       await window.api.db.saveCollection('clients', d.clients);
       await window.api.db.saveCollection('activities', d.activities);
       await window.api.db.saveCollection('expenses', d.expenses);
+      await window.api.db.saveCollection('invoices', []);
       await window.api.db.saveKV('studio', d.user);
       await window.api.db.saveKV('fiscal', d.fiscal);
     }
@@ -160,12 +169,14 @@ const App = () => {
     setClients([]);
     setActivities([]);
     setExpenses([]);
+    setInvoices([]);
     setStudio(emptyStudio);
     setFiscal(emptyFiscal);
     if (window.api?.db) {
       await window.api.db.saveCollection('clients', []);
       await window.api.db.saveCollection('activities', []);
       await window.api.db.saveCollection('expenses', []);
+      await window.api.db.saveCollection('invoices', []);
       await window.api.db.saveKV('studio', emptyStudio);
       await window.api.db.saveKV('fiscal', emptyFiscal);
     } else {
@@ -179,6 +190,8 @@ const App = () => {
   useEffect(() => { if (loaded && !showWelcome) dbSave('clients',    clients); }, [clients, loaded, showWelcome]);
   useEffect(() => { if (loaded && !showWelcome) dbSave('activities', activities); }, [activities, loaded, showWelcome]);
   useEffect(() => { if (loaded && !showWelcome) dbSave('expenses',   expenses); }, [expenses, loaded, showWelcome]);
+  useEffect(() => { if (loaded && !showWelcome) dbSave('invoices', invoices); }, [invoices, loaded, showWelcome]);
+  useEffect(() => { if (loaded && !showWelcome) dbSave('supplierRules', supplierRules); }, [supplierRules, loaded, showWelcome]);
   useEffect(() => { if (loaded && !showWelcome && studio) dbSave('studio', studio); }, [studio, loaded, showWelcome]);
   useEffect(() => { if (loaded && !showWelcome && fiscal) dbSave('fiscal', fiscal); }, [fiscal, loaded, showWelcome]);
 
@@ -257,6 +270,17 @@ const App = () => {
     window.showToast('Spesa eliminata', 'warning');
   };
 
+  const handleSaveInvoice = (updated) => {
+    setInvoices(list => list.map(i => (i.id === updated.id ? updated : i)));
+    setEditingInvoice(null);
+    window.showToast('Fattura aggiornata', 'success');
+  };
+
+  const handleDeleteInvoice = (id) => {
+    setInvoices(list => list.filter(i => i.id !== id));
+    window.showToast('Fattura rimossa', 'info');
+  };
+
   const handleResetData = () => {
     if (!confirm(t('data.resetDesc'))) return;
     const d = window.APP_DATA;
@@ -293,7 +317,8 @@ const App = () => {
 
       <div className="app" key={lang}>
         <Sidebar active={view} onNav={handleNav} clientCount={clients.length}
-          expenseCount={expenses.filter(e => e.monthKey === currentMonthKey).length} studio={s} />
+          expenseCount={expenses.filter(e => e.monthKey === currentMonthKey).length}
+          invoiceCount={invoices.length} studio={s} />
         <div className="main">
           <Topbar title={t('nav.' + view) || view} crumb={(() => {
             if (view === 'dashboard') return `${t('dash.hoursThisMonth')} · ${monthName()} ${year}`;
@@ -330,6 +355,10 @@ const App = () => {
           {view === "expenses" && <Expenses clients={clients} expenses={expenses} currentMonthKey={currentMonthKey}
             onAdd={billable => setEditingExpense({ __billable: billable })} onEdit={e => setEditingExpense(e)}
             onDelete={handleDeleteExpense} />}
+          {view === "invoices" && <Invoices
+            invoices={invoices} clients={clients} currentYear={year}
+            onImport={() => setImportOpen(true)}
+            onEdit={setEditingInvoice} onDelete={handleDeleteInvoice} />}
           {view === "settings" && <Settings user={s} onSave={d => setStudio(d)} onResetData={handleResetData} />}
           {view === "taxes" && <Taxes activities={activities} expenses={expenses} fiscal={fiscal || window.APP_DATA.fiscal}
             clients={clients} studio={s} year={year}
@@ -371,6 +400,10 @@ const App = () => {
             onSave={handleSaveExpense} onCancel={() => setEditingExpense(null)} onDelete={handleDeleteExpense} />
         )}
       </Modal>
+
+      {editingInvoice && <InvoiceDrawer
+        invoice={editingInvoice} clients={clients}
+        onSave={handleSaveInvoice} onClose={() => setEditingInvoice(null)} />}
 
       <ToastContainer />
 

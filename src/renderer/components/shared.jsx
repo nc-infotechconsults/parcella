@@ -24,7 +24,7 @@ window.COMMESSA_COLORS = COMMESSA_COLORS;
 window.getClientContacts = getClientContacts;
 window.getClientInvoiceContact = getClientInvoiceContact;
 
-const Sidebar = ({ active, onNav, clientCount, expenseCount, studio }) => {
+const Sidebar = ({ active, onNav, clientCount, expenseCount, invoiceCount, studio }) => {
   const u = studio || window.APP_DATA.user;
   return (
     <aside className="sidebar">
@@ -49,6 +49,10 @@ const Sidebar = ({ active, onNav, clientCount, expenseCount, studio }) => {
       <button className={"nav-item " + (active === "expenses" ? "active" : "")} onClick={() => onNav("expenses")}>
         <Icon name="euro" /> {t('nav.expenses')}
         {expenseCount > 0 && <span className="badge">{expenseCount}</span>}
+      </button>
+      <button className={"nav-item " + (active === "invoices" ? "active" : "")} onClick={() => onNav("invoices")}>
+        <Icon name="file" /> {t('nav.invoices')}
+        {invoiceCount > 0 && <span className="badge">{invoiceCount}</span>}
       </button>
       <button className={"nav-item " + (active === "taxes" ? "active" : "")} onClick={() => onNav("taxes")}>
         <Icon name="invoice" /> {t('nav.taxes')}
