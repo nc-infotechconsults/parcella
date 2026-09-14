@@ -38,12 +38,19 @@ function computeTaxes(activities, expenses, fiscal, year, clients, studio, invoi
   })();
 
   // ── Ricavi ────────────────────────────────────────────────────────────────
+  // Base CASSA (art. 54 TUIR), chosen by the user: for a professionista the
+  // taxable base is what was actually INCASSATO and actually PAGATO. Fatturato,
+  // da incassare and previsionale stay visible as information, outside the
+  // base — pairing accrual revenue with cash costs inflated the income.
   const ricaviFatturati = fy.consuntivo.ricavi;
   const ricaviPrevisionali = fy.previsionale.ricavi;
-  const compensi = ricaviFatturati + ricaviPrevisionali;
+  const ricaviIncassati = fy.consuntivo.ricaviIncassati;
+  const daIncassare = Math.round((ricaviFatturati - ricaviIncassati) * 100) / 100;
+  const compensi = ricaviIncassati;
 
-  const ritenutaTrattenuta = fy.consuntivo.ritenutaSubita;
-  const compensiConRit = ricaviFatturati;      // withholding only ever applies to issued invoices
+  // La ritenuta d'acconto è operata al pagamento, non all'emissione.
+  const ritenutaTrattenuta = fy.consuntivo.ritenutaIncassata;
+  const compensiConRit = ricaviIncassati;
   const compensiSenzaRit = compensi - compensiConRit;
 
   // ── IVA ───────────────────────────────────────────────────────────────────
@@ -204,6 +211,8 @@ function computeTaxes(activities, expenses, fiscal, year, clients, studio, invoi
     fy,
     ricaviFatturati,
     ricaviPrevisionali,
+    ricaviIncassati,
+    daIncassare,
     f24All,        // scadenze generate + manuali
     totaleAnno,
   };
@@ -237,10 +246,11 @@ const Taxes = ({ activities, expenses, fiscal, clients, studio, invoices, year: 
           </div>
         </div>
         <div className="kpi">
-          <div className="kpi-label">{t('dash.revenue')} {fiscalYear}</div>
+          <div className="kpi-label">{t('dash.revenue')} {fiscalYear} <span style={{ color: "var(--text-muted)", fontWeight: 400 }}>· {t('tax.basisCash')}</span></div>
           <div className="kpi-value tabular">{fmtEUR(tax.compensi)}</div>
           <div className="kpi-meta">
             <span>{t('tax.invoiced')} {fmtEUR(tax.ricaviFatturati)}</span>
+            <span> · {t('dash.toCollect')} {fmtEUR(tax.daIncassare)}</span>
             <span> · {t('tax.forecast')} {fmtEUR(tax.ricaviPrevisionali)}</span>
           </div>
         </div>
