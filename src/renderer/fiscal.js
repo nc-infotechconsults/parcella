@@ -60,7 +60,11 @@
   function buildAmortSchedule(inv) {
     const f = inv.fiscal || {};
     const years = Math.max(1, Number(f.amortYears) || 4);
-    const base = round2(Math.abs(inv.totals.imponibile || 0) * pct(f.deductPct) / 100);
+    // Structural guard, not merely a caller convention: a credit note can never
+    // open a schedule. Both callers already filter on sign, but a future one
+    // might not, and the failure mode is a silently inflated deduction.
+    const base = (inv.sign || 1) < 0 ? 0
+      : round2(Math.abs(inv.totals.imponibile || 0) * pct(f.deductPct) / 100);
     const full = base / years;
     const startYear = Number(String(inv.date || '').slice(0, 4));
     const half = f.firstYearHalf !== false;

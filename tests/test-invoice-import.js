@@ -88,6 +88,17 @@ test('a cespite above the threshold is proposed with amortization', () => {
   assert.equal(hw.items[0].proposal.fiscal.firstYearHalf, true);
 });
 
+test('a credit note is never proposed as a cespite', () => {
+  const xml = fixtures.read('passiva-td04-nota-credito.xml')
+    .replace('Storno canone noleggio', 'Storno MacBook Pro notebook')
+    .replace('<ImponibileImporto>65.58</ImponibileImporto>', '<ImponibileImporto>2400.00</ImponibileImporto>');
+  const m = buildManifest(base({
+    files: [{ sourcePath: '/tmp/nc.xml', name: 'nc.xml', buffer: Buffer.from(xml, 'utf-8') }],
+  }));
+  assert.equal(m.items[0].proposal.fiscal.category, 'Hardware');
+  assert.equal(m.items[0].proposal.fiscal.amortize, false);   // a return is not an acquisition
+});
+
 test('unreadable files are skipped with a reason, not fatal', () => {
   const m = buildManifest(base({
     files: [

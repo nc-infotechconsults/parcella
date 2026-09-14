@@ -60,7 +60,11 @@ function proposeFiscal(doc, counterparty, supplierRules) {
   const fromLines = guessCategory(text);
   const category = fromLines !== 'Altro' ? fromLines : guessCategory(counterparty.name || '');
   const rule = CATEGORY_RULES[category] || CATEGORY_RULES.Altro;
-  const amortize = doc.totals.imponibile >= AMORTIZE_THRESHOLD && category === 'Hardware';
+  // A credit note is never a cespite, so never propose one: otherwise the review
+  // panel renders "Ammortizza" pre-checked on a return and invites the user to
+  // confirm a treatment every consumer then has to neutralise.
+  const amortize = (doc.sign || 1) > 0
+    && doc.totals.imponibile >= AMORTIZE_THRESHOLD && category === 'Hardware';
   return {
     category,
     deductPct: rule.deductPct,

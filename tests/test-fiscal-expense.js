@@ -78,6 +78,20 @@ test('buildAmortSchedule without the half rule spreads evenly', () => {
   near(s.quotas[0].amount, 600);
 });
 
+test('buildAmortSchedule refuses to open a schedule for a credit note', () => {
+  // The guard is structural so that a future caller which forgets to filter on
+  // sign cannot reintroduce an inflated deduction.
+  const s = buildAmortSchedule({
+    id: 'inv_nc', sign: -1, date: '2026-05-15', lines: [],
+    totals: { imponibile: 2400 },
+    fiscal: { deductPct: 100, amortize: true, amortYears: 4, firstYearHalf: true },
+  });
+  near(s.cost, 0);
+  near(s.quotas.reduce((t, q) => t + q.amount, 0), 0);
+  near(amortQuotaFor(s, 2026), 0);
+  near(amortResidualAt(s, 2026), 0);
+});
+
 test('amortQuotaFor and amortResidualAt read the schedule', () => {
   const s = buildAmortSchedule({
     id: 'inv_z', date: '2026-05-15', totals: { imponibile: 2400 }, lines: [],
