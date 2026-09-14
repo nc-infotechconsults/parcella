@@ -131,6 +131,32 @@ test('a TD04 record keeps sign -1 so it subtracts downstream', () => {
   assert.equal(records[0].tipoDoc, 'TD04');
 });
 
+test('category inference handles Italian inflections without over-matching', () => {
+  const { guessCategory } = require('../src/shared/categories');
+  const expected = [
+    ['Canone abbonamento mensile', 'Software'], ['Licenza software annuale', 'Software'],
+    ['Servizio di telefonia mobile', 'Telefonia'], ['Fornitura energia elettrica', 'Utenze'],
+    ['Utenze idriche', 'Utenze'], ['Commissioni bancarie trimestrali', 'Commissioni bancarie'],
+    ['Consulenza fiscale', 'Consulenze'], ['Carburante per autovettura', 'Auto'],
+    ['Pedaggio autostradale', 'Auto'], ['Parcheggio aeroporto', 'Auto'],
+    ['Sostituzione pneumatici', 'Auto'], ['Totale soste (IVA 22.00)', 'Auto'],
+    ['Pernottamento hotel Roma', 'Pernottamento'], ['Cena di lavoro ristorante', 'Pasti'],
+    ['Trasferta Milano', 'Trasferta'], ['Cancelleria varia', 'Cancelleria'],
+    ['Assicurazione RC professionale', 'Assicurazioni'], ['MacBook Pro 14 notebook', 'Hardware'],
+    ['Corso di formazione cloud', 'Formazione'], ['Marca da bollo', 'Bolli/Tasse'],
+  ];
+  for (const [desc, want] of expected) assert.equal(guessCategory(desc), want, desc);
+
+  // Near-misses: these must NOT be captured by the stem they resemble, because
+  // each would propose a wrong deducibilita on a real document.
+  const forbidden = [
+    ["Ritenuta sostituto d'imposta", 'Auto'], ['Servizio di monitoraggio infrastruttura', 'Hardware'],
+    ['Simulazione finanziaria', 'Telefonia'], ['Attivita di volontariato aziendale', 'Trasferta'],
+    ['Prodotti gastronomici', 'Utenze'], ['Mastercard commissioni', 'Formazione'],
+  ];
+  for (const [desc, wrong] of forbidden) assert.notEqual(guessCategory(desc), wrong, desc);
+});
+
 test('buildManifest refuses to run without the studio identity', () => {
   assert.throws(() => buildManifest(base({ files: [file('passiva-td04-nota-credito.xml')], studioIds: [] })), /studioIds/);
 });

@@ -29,24 +29,33 @@
 
   const AMORTIZE_THRESHOLD = 516.46;
 
-  // ORDER IS THE POLICY: first match wins, so concrete/physical categories are
-  // listed before generic ones. A parking invoice reading "Totale soste" and
-  // "Canone abbonamento" must land on Auto, not on Software.
+  // ORDER IS THE POLICY: first match wins, so concrete categories precede
+  // generic ones. A parking invoice reading "Totale soste" and "Canone
+  // abbonamento" must land on Auto, not Software; a line reading "corso" is
+  // training whatever its subject, so Formazione precedes Software.
+  //
+  // Each entry has two halves: STEMS take \w* so Italian inflections match
+  // ("carburant" -> carburante, "pedagg" -> pedaggio/pedaggi), while genuinely
+  // ambiguous short tokens stay whole words so they cannot swallow longer ones
+  // ("monitor" must not match "monitoraggio", "sim" must not match
+  // "simulazione", "volo" must not match "volontariato"). A trailing \b after a
+  // stem is the bug this shape exists to prevent: it silently blocks every
+  // inflected form, dropping real invoices into Altro at 100% deducibilita.
   const KEYWORDS = [
-    [/\b(carburant|benzina|gasolio|pedaggi|autostrad|sosta|soste|parcheggi|noleggio auto|revisione|pneumatic)\b/i, "Auto"],
-    [/\b(notebook|laptop|macbook|monitor|server|stampante|hardware|pc |computer|iphone|ipad|alimentatore)\b/i, "Hardware"],
-    [/\b(abbonament|licen[zc]|subscription|saas|cloud|software|hosting|dominio|github|microsoft|adobe|figma)\b/i, "Software"],
-    [/\b(corso|formazione|training|webinar|master|certificazione)\b/i, "Formazione"],
-    [/\b(telefon|mobile|sim|fibra|adsl|connettivit)\b/i, "Telefonia"],
-    [/\b(energia|elettric|gas|acqua|utenz|bolletta|enel|luce)\b/i, "Utenze"],
-    [/\b(commission|spese bancarie|bollo c\/c|canone conto)\b/i, "Commissioni bancarie"],
-    [/\b(consulen|notaio|commercialista|avvocato|perizia)\b/i, "Consulenze"],
-    [/\b(hotel|albergo|pernottament|b&b)\b/i, "Pernottamento"],
-    [/\b(ristorant|pranzo|cena|bar |catering)\b/i, "Pasti"],
-    [/\b(treno|trenitalia|italo|volo|aereo|taxi|trasfert|biglietto)\b/i, "Trasferta"],
-    [/\b(cancelleri|toner|carta|ufficio)\b/i, "Cancelleria"],
-    [/\b(polizza|assicurazion|rc professionale)\b/i, "Assicurazioni"],
-    [/\b(imposta di bollo|marca da bollo|diritti camerali)\b/i, "Bolli/Tasse"],
+    [/\b(?:carburant|benzina|gasolio|pedagg|autostrad|sost[ae]|parchegg|pneumatic|revision)\w*|\b(?:noleggio auto|gasolio)\b/i, "Auto"],
+    [/\b(?:notebook|laptop|macbook|stampant|hardware|computer|iphone|ipad|alimentator)\w*|\b(?:monitor|server|pc)\b/i, "Hardware"],
+    [/\b(?:corso|corsi|formazion|training|webinar|certificazion)\w*/i, "Formazione"],
+    [/\b(?:abbonament|licen[zc]|subscription|software|hosting|dominio|github|microsoft|adobe|figma)\w*|\b(?:saas|cloud)\b/i, "Software"],
+    [/\b(?:telefon|fibra|connettivit)\w*|\b(?:mobile|sim|adsl)\b/i, "Telefonia"],
+    [/\b(?:energia|elettric|utenz|bolletta|bollette)\w*|\b(?:gas|acqua|enel|luce)\b/i, "Utenze"],
+    [/\b(?:commission)\w*|\b(?:spese bancarie|bollo c\/c|canone conto)\b/i, "Commissioni bancarie"],
+    [/\b(?:consulen|notai|commercialist|avvocat|perizi)\w*/i, "Consulenze"],
+    [/\b(?:albergh|pernottament)\w*|\b(?:hotel|albergo|b&b)\b/i, "Pernottamento"],
+    [/\b(?:ristorant|catering)\w*|\b(?:pranzo|pranzi|cena|cene|bar)\b/i, "Pasti"],
+    [/\b(?:trasfert|bigliett|trenitalia)\w*|\b(?:treno|treni|italo|volo|voli|aereo|taxi)\b/i, "Trasferta"],
+    [/\b(?:cancelleri|toner)\w*|\b(?:carta|ufficio)\b/i, "Cancelleria"],
+    [/\b(?:polizz|assicurazion)\w*|\brc professionale\b/i, "Assicurazioni"],
+    [/\b(?:imposta di bollo|marca da bollo|diritti camerali)\b/i, "Bolli/Tasse"],
   ];
 
   function guessCategory(text) {
