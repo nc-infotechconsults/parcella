@@ -46,22 +46,13 @@ const InvoiceImportWizard = ({ open, onClose, onImported }) => {
   const today = () => new Date().toISOString().slice(0, 10);
   const [bulkDate, setBulkDate] = useState(today());
 
-  // One place decides what changing a category means, so the per-row select and
-  // the bulk action cannot drift apart. A stale `amortize` is a wrong tax
-  // treatment — capitalising a non-asset, or expensing a real one in full — so
-  // this deliberately mirrors proposeFiscal, credit-note guard included.
-  const fiscalForCategory = (item, fiscal, cat) => {
-    const rule = window.CATEGORY_RULES[cat];
-    const amortize = (item.doc.sign || 1) > 0
-      && cat === 'Hardware'
-      && item.doc.totals.imponibile >= window.AMORTIZE_THRESHOLD;
-    return {
-      ...fiscal, category: cat, deductPct: rule ? rule.deductPct : 100,
-      amortize,
-      amortYears: amortize ? (fiscal.amortYears || 4) : null,
-      firstYearHalf: amortize,
-    };
-  };
+  // Shared with the importer and the invoice list — see src/shared/categories.js.
+  const fiscalForCategory = (item, fiscal, cat) => window.fiscalForCategory(cat, {
+    sign: item.doc.sign,
+    imponibile: item.doc.totals.imponibile,
+    vatDetractPct: fiscal ? fiscal.vatDetractPct : 100,
+    amortYears: fiscal ? fiscal.amortYears : null,
+  });
 
   const settlementOf = it => (decisions[it.id] && decisions[it.id].settlement) || it.proposal.settlement;
   const setSettlement = (it, patch) => setDecision(it.id, { settlement: { ...settlementOf(it), ...patch } });

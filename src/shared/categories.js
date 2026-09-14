@@ -66,5 +66,26 @@
     return "Altro";
   }
 
-  return { CATEGORY_RULES, AMORTIZE_THRESHOLD, guessCategory };
+  // The single definition of what choosing a category implies. The importer
+  // proposes with it, the import wizard re-applies it when the user corrects a
+  // guess, and the invoice list uses it for bulk edits. Keeping three copies is
+  // how a stale `amortize` — a wrong tax treatment — gets left behind.
+  function fiscalForCategory(category, opts) {
+    const o = opts || {};
+    const rule = CATEGORY_RULES[category] || CATEGORY_RULES.Altro;
+    const sign = o.sign == null ? 1 : o.sign;
+    // A credit note is a return, not an acquisition: it can never open a schedule.
+    const amortize = sign > 0 && category === 'Hardware'
+      && (o.imponibile || 0) >= AMORTIZE_THRESHOLD;
+    return {
+      category,
+      deductPct: rule.deductPct,
+      vatDetractPct: o.vatDetractPct == null ? 100 : o.vatDetractPct,
+      amortize,
+      amortYears: amortize ? (o.amortYears || 4) : null,
+      firstYearHalf: amortize,
+    };
+  }
+
+  return { CATEGORY_RULES, AMORTIZE_THRESHOLD, guessCategory, fiscalForCategory };
 });

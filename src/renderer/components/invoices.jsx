@@ -10,8 +10,10 @@ const InvoiceBadges = ({ inv }) => (
   </>
 );
 
-const Invoices = ({ invoices, clients, expenses, fiscal, currentYear, onImport, onEdit, onDelete }) => {
+const Invoices = ({ invoices, clients, expenses, fiscal, currentYear, onImport, onEdit, onDelete, onBulkUpdate, onBulkDelete }) => {
   const [tab, setTab] = useState("active");
+  const [picked, setPicked] = useState([]);
+  const [bulkDate, setBulkDate] = useState(new Date().toISOString().slice(0, 10));
   const [yearFilter, setYearFilter] = useState(String(currentYear));
   const [periodFilter, setPeriodFilter] = useState("all");
 
@@ -23,6 +25,36 @@ const Invoices = ({ invoices, clients, expenses, fiscal, currentYear, onImport, 
   const active = scoped.filter(i => i.direction === "active");
   const passive = scoped.filter(i => i.direction === "passive");
   const list = tab === "active" ? active : passive;
+
+  // Selection is scoped to what is on screen: changing tab, year or quarter must
+  // not leave rows selected that the user can no longer see and is about to act on.
+  const visible = list.map(i => i.id);
+  const sel = picked.filter(id => visible.includes(id));
+  const toggle = id => setPicked(p => p.includes(id) ? p.filter(x => x !== id) : [...p, id]);
+  const allPicked = visible.length > 0 && sel.length === visible.length;
+  const selInvoices = () => list.filter(i => sel.includes(i.id));
+
+  const bulkSettle = () => onBulkUpdate(sel, inv => ({
+    settlement: { ...inv.settlement, status: 'settled', date: bulkDate },
+  }));
+  const bulkOpen = () => onBulkUpdate(sel, inv => ({
+    settlement: { ...inv.settlement, status: 'open' },
+  }));
+  const bulkCategory = cat => onBulkUpdate(
+    selInvoices().filter(i => i.direction === 'passive').map(i => i.id),
+    inv => ({ fiscal: window.fiscalForCategory(cat, {
+      sign: inv.sign, imponibile: inv.totals.imponibile,
+      vatDetractPct: inv.fiscal ? inv.fiscal.vatDetractPct : 100,
+      amortYears: inv.fiscal ? inv.fiscal.amortYears : null,
+    }) }));
+  const bulkClient = clientId => onBulkUpdate(
+    selInvoices().filter(i => i.direction === 'active').map(i => i.id),
+    () => ({ clientId: clientId || null }));
+  const bulkDelete = () => {
+    if (!confirm(t('inv.bulkDeleteConfirm', { n: sel.length }))) return;
+    onBulkDelete(sel);
+    setPicked([]);
+  };
 
   const sum = (rows, pick) => rows.reduce((s, i) => s + (i.sign || 1) * pick(i), 0);
   // Same inputs as Tasse, or the two screens would print two different numbers
@@ -108,9 +140,36 @@ const Invoices = ({ invoices, clients, expenses, fiscal, currentYear, onImport, 
         </div>
       ) : (
         <div className="card">
+          {sel.length > 0 && (
+            <div className="filter-row" style={{ gap: 8, alignItems: 'center',
+              padding: '8px 12px', background: 'var(--bg-sunken)', borderBottom: '1px solid var(--border)' }}>
+              <strong>{t('imp.selectedCount', { n: sel.length })}</strong>
+              <input type="date" className="input mono" style={{ width: 150 }}
+                value={bulkDate} onChange={e => setBulkDate(e.target.value)} />
+              <button className="btn btn-sm" onClick={bulkSettle}>{t('imp.bulkSettle')}</button>
+              <button className="btn btn-sm" onClick={bulkOpen}>{t('inv.bulkReopen')}</button>
+              <select className="select" value="" onChange={e => { if (e.target.value) bulkCategory(e.target.value); }}>
+                <option value="">{t('imp.bulkCategory')}</option>
+                {Object.keys(window.CATEGORY_RULES).map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+              <select className="select" value="" onChange={e => bulkClient(e.target.value)}>
+                <option value="">{t('imp.bulkClient')}</option>
+                {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+              {/* Unlike the wizard's "exclude", this one really deletes: the records
+                  are already in the ledger and their revenue and IVA are in every
+                  declared figure. Hence the count in the confirmation. */}
+              <button className="btn btn-sm" style={{ color: 'var(--danger)' }}
+                onClick={bulkDelete}>{t('inv.bulkDelete')}</button>
+            </div>
+          )}
           <table className="data">
             <thead>
               <tr>
+                <th style={{ width: 36 }}>
+                  <input type="checkbox" checked={allPicked}
+                    onChange={e => setPicked(e.target.checked ? visible : [])} />
+                </th>
                 <th style={{ width: 92 }}>{t('inv.date')}</th>
                 <th style={{ width: 120 }}>{t('inv.number')}</th>
                 <th>{t('inv.counterparty')}</th>
@@ -123,7 +182,7 @@ const Invoices = ({ invoices, clients, expenses, fiscal, currentYear, onImport, 
             </thead>
             <tbody>
               {list.length === 0 && (
-                <tr><td colSpan={8}>
+                <tr><td colSpan={9}>
                   <div className="empty-state">
                     <div className="title">{t('inv.empty')}</div>
                     <div>{t('inv.emptyHint')}</div>
@@ -132,6 +191,9 @@ const Invoices = ({ invoices, clients, expenses, fiscal, currentYear, onImport, 
               )}
               {list.map(inv => (
                 <tr key={inv.id} onClick={() => onEdit(inv)} style={{ cursor: "pointer" }}>
+                  <td onClick={ev => ev.stopPropagation()}>
+                    <input type="checkbox" checked={sel.includes(inv.id)} onChange={() => toggle(inv.id)} />
+                  </td>
                   <td className="mono">{inv.date}</td>
                   <td className="mono">{inv.number}</td>
                   <td>

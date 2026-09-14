@@ -8,7 +8,7 @@ const crypto = require('crypto');
 const { parseFattura } = require('./fattura-parse');
 const { classify, dedupKey, normalizeId } = require('./fattura-classify');
 const { unwrap } = require('./fattura-unwrap');
-const { CATEGORY_RULES, AMORTIZE_THRESHOLD, guessCategory } = require('../shared/categories');
+const { CATEGORY_RULES, AMORTIZE_THRESHOLD, guessCategory, fiscalForCategory } = require('../shared/categories');
 
 const ACCEPTED = /\.(xml|p7m|zip)$/i;
 const DEFAULT_AMORT_YEARS = 4;
@@ -59,20 +59,11 @@ function proposeFiscal(doc, counterparty, supplierRules) {
   const text = [doc.causale, ...doc.lines.map(l => l.desc)].join(' ');
   const fromLines = guessCategory(text);
   const category = fromLines !== 'Altro' ? fromLines : guessCategory(counterparty.name || '');
-  const rule = CATEGORY_RULES[category] || CATEGORY_RULES.Altro;
-  // A credit note is never a cespite, so never propose one: otherwise the review
-  // panel renders "Ammortizza" pre-checked on a return and invites the user to
-  // confirm a treatment every consumer then has to neutralise.
-  const amortize = (doc.sign || 1) > 0
-    && doc.totals.imponibile >= AMORTIZE_THRESHOLD && category === 'Hardware';
-  return {
-    category,
-    deductPct: rule.deductPct,
-    vatDetractPct: 100,
-    amortize,
-    amortYears: amortize ? DEFAULT_AMORT_YEARS : null,
-    firstYearHalf: amortize ? true : false,
-  };
+  return fiscalForCategory(category, {
+    sign: doc.sign,
+    imponibile: doc.totals.imponibile,
+    amortYears: DEFAULT_AMORT_YEARS,
+  });
 }
 
 function buildManifest({ files, existing, clients, supplierRules, studioIds }) {

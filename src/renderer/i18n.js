@@ -65,6 +65,11 @@
       'inv.settlementDate': 'Data saldo',
       'inv.notes': 'Note',
       'inv.settlementDateRequired': 'Indica la data di saldo: senza data il costo non viene dedotto e la fattura resta tra quelle da saldare.',
+      'inv.bulkUpdated': '{n} fatture aggiornate',
+      'inv.bulkDeleted': '{n} fatture eliminate',
+      'inv.bulkReopen': 'Segna da saldare',
+      'inv.bulkDelete': 'Elimina',
+      'inv.bulkDeleteConfirm': 'Eliminare definitivamente {n} fatture? I loro importi usciranno da ricavi, costi e IVA.',
       'inv.deleteConfirm': 'Eliminare la fattura {number}? Ricavi, costi e IVA di questo documento spariranno da tutti i conteggi. L\'operazione non è reversibile.',
 
       // Import wizard
@@ -515,6 +520,11 @@
       'inv.settlementDate': 'Settlement date',
       'inv.notes': 'Notes',
       'inv.settlementDateRequired': 'Set the settlement date: without one the cost is not deducted and the invoice stays in the still-to-settle list.',
+      'inv.bulkUpdated': '{n} invoices updated',
+      'inv.bulkDeleted': '{n} invoices deleted',
+      'inv.bulkReopen': 'Mark unsettled',
+      'inv.bulkDelete': 'Delete',
+      'inv.bulkDeleteConfirm': 'Permanently delete {n} invoices? Their amounts leave revenue, costs and VAT.',
       'inv.deleteConfirm': 'Delete invoice {number}? Its revenue, costs and VAT will disappear from every figure. This cannot be undone.',
 
       // Import wizard

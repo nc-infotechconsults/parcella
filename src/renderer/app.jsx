@@ -278,6 +278,20 @@ const App = () => {
     window.showToast('Fattura aggiornata', 'success');
   };
 
+  // patch is a function of the invoice, so a bulk edit can depend on the record
+  // it is changing — a category implies a different cespite decision per amount.
+  const handleBulkUpdateInvoices = (ids, patch) => {
+    if (!ids.length) return;
+    setInvoices(list => list.map(i => ids.includes(i.id) ? { ...i, ...patch(i) } : i));
+    window.showToast(t('inv.bulkUpdated', { n: ids.length }), 'success');
+  };
+
+  const handleBulkDeleteInvoices = (ids) => {
+    if (!ids.length) return;
+    setInvoices(list => list.filter(i => !ids.includes(i.id)));
+    window.showToast(t('inv.bulkDeleted', { n: ids.length }), 'info');
+  };
+
   const handleDeleteInvoice = (id) => {
     // The confirmation lives in the view, next to the button, exactly as
     // ClientDetail does it.
@@ -376,7 +390,8 @@ const App = () => {
             invoices={invoices} clients={clients} expenses={expenses}
             fiscal={fiscal || window.APP_DATA.fiscal} currentYear={year}
             onImport={() => setImportOpen(true)}
-            onEdit={setEditingInvoice} onDelete={handleDeleteInvoice} />}
+            onEdit={setEditingInvoice} onDelete={handleDeleteInvoice}
+          onBulkUpdate={handleBulkUpdateInvoices} onBulkDelete={handleBulkDeleteInvoices} />}
           {view === "settings" && <Settings user={s} onSave={d => setStudio(d)} onResetData={handleResetData} />}
           {view === "taxes" && <Taxes activities={activities} expenses={expenses} fiscal={fiscal || window.APP_DATA.fiscal}
             clients={clients} studio={s} invoices={invoices} year={year}
