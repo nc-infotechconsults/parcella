@@ -74,7 +74,7 @@ const Dashboard = ({ clients, activities, expenses, invoices, fiscal, currentMon
         <div className="kpi">
           <div className="kpi-label">{t('dash.toCollect')}</div>
           <div className="kpi-value tabular">{fmtEUR(daIncassare)}</div>
-          <div className="kpi-meta"><span>IVA periodo {fmtEUR(fy.consuntivo.ivaSaldo)}</span></div>
+          <div className="kpi-meta"><span>{t('dash.vatBalanceYear')} {fmtEUR(fy.consuntivo.ivaSaldo)}</span></div>
         </div>
       </div>
 
@@ -201,6 +201,9 @@ const Dashboard = ({ clients, activities, expenses, invoices, fiscal, currentMon
         <div className="card-header"><strong>{t('dash.costsByCategory')}</strong></div>
         <table className="data">
           <tbody>
+            {Object.keys(fy.costiPerCategoria).length === 0 && (
+              <tr><td colSpan={2}><div className="empty-state"><div className="title">—</div></div></td></tr>
+            )}
             {Object.entries(fy.costiPerCategoria)
               .sort((a, b) => b[1] - a[1])
               .map(([cat, amount]) => (

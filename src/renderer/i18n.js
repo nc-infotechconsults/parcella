@@ -142,6 +142,7 @@
       'dash.toCollect': 'Da incassare',
       'dash.costsByCategory': 'Costi per categoria',
       'dash.upcoming': 'Prossime scadenze',
+      'dash.vatBalanceYear': 'Saldo IVA anno',
 
       // Clients
       'client.new': 'Nuovo cliente',
@@ -581,6 +582,7 @@
       'dash.toCollect': 'To collect',
       'dash.costsByCategory': 'Costs by category',
       'dash.upcoming': 'Upcoming due dates',
+      'dash.vatBalanceYear': 'VAT balance, year',
 
       // Clients
       'client.new': 'New client',

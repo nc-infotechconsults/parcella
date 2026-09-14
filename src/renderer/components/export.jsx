@@ -839,6 +839,10 @@ const InvoicedForMonth = ({ client, monthKey, invoices, acts }) => {
         </div>
       ))}
       <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, padding: "6px 0 0", marginTop: 6, borderTop: "1px solid var(--border)" }}>
+        <span style={{ color: "var(--text-muted)" }}>Totale fatturato</span>
+        <span className="mono"><strong>{fmtEUR(invoiced)}</strong></span>
+      </div>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, padding: "3px 0" }}>
         <span style={{ color: "var(--text-muted)" }}>Lavoro registrato</span>
         <span className="mono">{fmtH(hours)}</span>
       </div>
