@@ -3737,9 +3737,10 @@ In `src/renderer/i18n.js` (`it`, mirrored in `en`):
       'tax.assetResidual': 'Residuo',
       'tax.assetYears': 'Anni',
       'tax.reverseNeutral': 'Reverse charge (neutro)',
+      'tax.basisCash': 'base cassa',
 ```
 
-English: `Invoiced`, `To invoice`, `Assets & depreciation`, `Cost`, `Year quota`, `Residual`, `Years`, `Reverse charge (neutral)`.
+English: `Invoiced`, `To invoice`, `Assets & depreciation`, `Cost`, `Year quota`, `Residual`, `Years`, `Reverse charge (neutral)`, `cash basis`.
 
 - [ ] **Step 2: Source revenue and costs from the invoices**
 
@@ -3764,12 +3765,19 @@ and immediately after the `const yearExp = ...` line insert:
 Replace the `compensi`, `ritenutaTrattenuta`, `compensiConRit`, `ivaDebito`, `ivaCredito` and `costiDeducibili` definitions with:
 
 ```js
+  // Base CASSA (art. 54 TUIR), chosen by the user: for a professionista the
+  // taxable base is what was actually INCASSATO and actually PAGATO. Fatturato,
+  // da incassare and previsionale stay visible as information, outside the
+  // base — pairing accrual revenue with cash costs inflated the income.
   const ricaviFatturati = fy.consuntivo.ricavi;
   const ricaviPrevisionali = fy.previsionale.ricavi;
-  const compensi = ricaviFatturati + ricaviPrevisionali;
+  const ricaviIncassati = fy.consuntivo.ricaviIncassati;
+  const daIncassare = Math.round((ricaviFatturati - ricaviIncassati) * 100) / 100;
+  const compensi = ricaviIncassati;
 
-  const ritenutaTrattenuta = fy.consuntivo.ritenutaSubita;
-  const compensiConRit = ricaviFatturati;      // withholding only ever applies to issued invoices
+  // La ritenuta d'acconto è operata al pagamento, non all'emissione.
+  const ritenutaTrattenuta = fy.consuntivo.ritenutaIncassata;
+  const compensiConRit = ricaviIncassati;
   const compensiSenzaRit = compensi - compensiConRit;
 
   const ivaDebito = fy.consuntivo.ivaDebito;
@@ -3803,7 +3811,8 @@ Replace the body of the `trimestri` computation so periods come from `fy` rather
   });
 ```
 
-Add `fy`, `ricaviFatturati` and `ricaviPrevisionali` to the object `computeTaxes` returns.
+Add `fy`, `ricaviFatturati`, `ricaviPrevisionali`, `ricaviIncassati` and
+`daIncassare` to the object `computeTaxes` returns.
 
 - [ ] **Step 3: Show the split and the reverse-charge row**
 
@@ -3812,6 +3821,7 @@ In the revenue KPI of the Taxes component, render both figures:
 ```jsx
           <div className="kpi-meta">
             <span>{t('tax.invoiced')} {fmtEUR(res.ricaviFatturati)}</span>
+            <span> · {t('dash.toCollect')} {fmtEUR(res.daIncassare)}</span>
             <span> · {t('tax.forecast')} {fmtEUR(res.ricaviPrevisionali)}</span>
           </div>
 ```
