@@ -195,10 +195,19 @@ function createWindow() {
     for (const rec of result.records) {
       const item = items.find(i => i.id === rec.id);
       if (!item || !item.file.sourcePath) continue;
-      const yearDir = path.join(invoiceArchiveDir, String(rec.date).slice(0, 4));
-      fs.mkdirSync(yearDir, { recursive: true });
-      const dest = path.join(yearDir, `${rec.src.sha256.slice(0, 8)}_${rec.src.fileName}`);
       try {
+        // Everything filesystem-related is inside the try, mkdirSync included:
+        // a directory that cannot be created must cost this record its archive
+        // copy, never the whole batch's invoice data.
+        const year = /^\d{4}/.test(String(rec.date)) ? String(rec.date).slice(0, 4) : 'senza-data';
+        const yearDir = path.join(invoiceArchiveDir, year);
+        fs.mkdirSync(yearDir, { recursive: true });
+        // fileName can originate in a zip entry, i.e. in the archive's own
+        // bytes. It must never steer the write path: basename() drops directory
+        // components, and normalizing backslashes first covers Windows-style
+        // separators that POSIX basename would otherwise keep.
+        const safeName = path.basename(String(rec.src.fileName || '').replace(/[\\]+/g, '/')) || 'fattura.xml';
+        const dest = path.join(yearDir, `${rec.src.sha256.slice(0, 8)}_${safeName}`);
         if (!fs.existsSync(dest)) fs.copyFileSync(item.file.sourcePath, dest);
         rec.src.archivePath = dest;
       } catch (err) {
