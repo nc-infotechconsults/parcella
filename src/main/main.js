@@ -59,6 +59,8 @@ try {
   AppDB._type = 'json';
 }
 
+const { collectFiles, buildManifest, finalizeRecords } = require('./invoice-import');
+
 let win;
 let db;
 
@@ -151,6 +153,67 @@ function createWindow() {
   ipcMain.handle('db:nextDocNumber',   (_, { year }) => db.nextDocNumber(year));
   ipcMain.handle('db:getDocCounter',   (_, { year }) => db.getDocCounter(year));
   ipcMain.handle('db:resetDocCounter', (_, { year }) => { db.resetDocCounter(year); return true; });
+
+  // ── Fatture elettroniche ─────────────────────────────────────────
+  const invoiceArchiveDir = path.join(userData, 'invoices');
+
+  function studioIdentity() {
+    const studio = db.getKV('studio') || {};
+    return [studio.piva, studio.cf].filter(Boolean);
+  }
+
+  ipcMain.handle('invoices:chooseSource', async () => {
+    const result = await dialog.showOpenDialog(win, {
+      title: 'Seleziona le fatture da importare',
+      filters: [{ name: 'Fatture elettroniche', extensions: ['xml', 'p7m', 'zip'] }],
+      properties: ['openFile', 'openDirectory', 'multiSelections'],
+    });
+    return result.canceled ? null : result.filePaths;
+  });
+
+  ipcMain.handle('invoices:scan', (_, { paths }) => {
+    const { invoices, clients, supplierRules } = db.loadAll();
+    const files = collectFiles(paths);
+    return buildManifest({
+      files,
+      existing: {
+        dedupKeys: invoices.map(i => i.dedupKey),
+        hashes: invoices.map(i => i.src && i.src.sha256).filter(Boolean),
+      },
+      clients,
+      supplierRules,
+      studioIds: studioIdentity(),
+    });
+  });
+
+  ipcMain.handle('invoices:commit', (_, { items, decisions }) => {
+    const { supplierRules } = db.loadAll();
+    const result = finalizeRecords({ items, decisions, supplierRules });
+
+    // Archive the originals so the ledger survives the Downloads folder
+    // being emptied, and so the detail view can always show the document.
+    for (const rec of result.records) {
+      const item = items.find(i => i.id === rec.id);
+      if (!item || !item.file.sourcePath) continue;
+      const yearDir = path.join(invoiceArchiveDir, String(rec.date).slice(0, 4));
+      fs.mkdirSync(yearDir, { recursive: true });
+      const dest = path.join(yearDir, `${rec.src.sha256.slice(0, 8)}_${rec.src.fileName}`);
+      try {
+        if (!fs.existsSync(dest)) fs.copyFileSync(item.file.sourcePath, dest);
+        rec.src.archivePath = dest;
+      } catch (err) {
+        rec.src.archivePath = null;
+        rec.notes = [rec.notes, `Archiviazione non riuscita: ${err.message}`].filter(Boolean).join(' — ');
+      }
+    }
+    return result;
+  });
+
+  ipcMain.handle('invoices:openOriginal', (_, archivePath) => {
+    if (!archivePath || !fs.existsSync(archivePath)) return false;
+    shell.showItemInFolder(archivePath);
+    return true;
+  });
 
   ipcMain.handle('db:getInfo', () => {
     const icloud = iCloudPath();
