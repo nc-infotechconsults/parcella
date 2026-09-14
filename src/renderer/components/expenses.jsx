@@ -6,46 +6,11 @@
 //     deductPct: 0-100 → IRPEF deductible portion (es. 80% telefono, 20% auto, 75% pasti)
 //     amortize: true + amortYears → cespite (>= 516.46€ rule)
 
-const CATEGORY_RULES = {
-  "Trasferta": { deductPct: 100, vatPct: 10, vatExempt: false },
-  "Pasti": { deductPct: 75, vatPct: 10, vatExempt: false, hint: "Pasti deducibili 75% (art. 109 TUIR)" },
-  "Pernottamento": { deductPct: 75, vatPct: 10, vatExempt: false },
-  "Software": { deductPct: 100, vatPct: 22, vatExempt: false },
-  "Stock photo": { deductPct: 100, vatPct: 22, vatExempt: false },
-  "Cancelleria": { deductPct: 100, vatPct: 22, vatExempt: false },
-  "Formazione": { deductPct: 100, vatPct: 22, vatExempt: false },
-  "Telefonia": { deductPct: 80, vatPct: 22, vatExempt: false, hint: "Telefonia deducibile 80% (art. 102 TUIR)" },
-  "Auto": { deductPct: 20, vatPct: 22, vatExempt: false, hint: "Auto non strumentale: deducibilità 20%" },
-  "Rimborso km": { deductPct: 100, vatPct: 0, vatExempt: true, hint: "Rimborso chilometrico al tasso ACI (fuori campo IVA). Importo = km × tariffa ACI vigente." },
-  "Hardware": { deductPct: 100, vatPct: 22, vatExempt: false, hint: "Cespite > 516,46€ → ammortamento pluriennale" },
-  "Assicurazioni": { deductPct: 100, vatPct: 0, vatExempt: true, hint: "Assicurazioni esenti IVA art. 10 DPR 633/72" },
-  "Bolli/Tasse": { deductPct: 100, vatPct: 0, vatExempt: true, hint: "Operazioni fuori campo IVA" },
-  "Altro": { deductPct: 100, vatPct: 22, vatExempt: false },
-};
-const AMORTIZE_THRESHOLD = 516.46;
-
-// Computes fiscal breakdown for a single expense
-function computeExpenseFiscals(e) {
-  const gross = e.amount;
-  const net = e.vatExempt ? gross : gross / (1 + (e.vatPct || 0) / 100);
-  const vat = gross - net;
-  const vatDetracted = e.billable
-    ? vat   // billable: full VAT recovered via fattura cliente
-    : (e.vatExempt ? 0 : vat * Math.min(e.deductPct, 100) / 100);
-  const yearlyDeducted = e.amortize
-    ? (net * e.deductPct / 100) / (e.amortYears || 4)
-    : net * e.deductPct / 100;
-  const inAmortization = e.amortize === true || (!e.billable && net > AMORTIZE_THRESHOLD && (e.category === "Hardware" || e.category === "Auto"));
-  return {
-    gross,
-    net,
-    vat,
-    vatDetracted,
-    yearlyDeducted,
-    inAmortization,
-    nonDeductible: net - (net * e.deductPct / 100),
-  };
-}
+// Fiscal rules live in src/renderer/fiscal.js and src/shared/categories.js so
+// that Node tests can assert them. These aliases keep existing call sites working.
+const CATEGORY_RULES = window.CATEGORY_RULES;
+const AMORTIZE_THRESHOLD = window.AMORTIZE_THRESHOLD;
+const computeExpenseFiscals = window.computeExpenseFiscals;
 window.computeExpenseFiscals = computeExpenseFiscals;
 window.CATEGORY_RULES = CATEGORY_RULES;
 window.AMORTIZE_THRESHOLD = AMORTIZE_THRESHOLD;
