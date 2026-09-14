@@ -699,7 +699,7 @@ module.exports = { TIPO_DOC, normalizeId, classify, dedupKey };
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `node --test tests/test-fattura-classify.js`
-Expected: PASS — 12 tests.
+Expected: PASS — 14 tests.
 
 Note: `normalizeId('IE1111111AA')` returns `IE1111111AA` unchanged (the `IT` rule only applies to Italian 11-digit VAT numbers), which is why the expected dedup key starts with `IE`.
 
@@ -1560,6 +1560,35 @@ test('proposals match how the user\'s real invoices actually read', () => {
   assert.equal(guessCategory('GITHUB INC'), 'Software');
 });
 
+test('safeArchiveName contains every path-traversal attempt', () => {
+  const path = require('path');
+  const { safeArchiveName } = require('../src/main/invoice-import');
+  const dir = path.join('/archive', '2026');
+  const attacks = [
+    '../../../../../../Users/x/.zshrc',
+    '..\\..\\..\\Windows\\System32\\evil.xml',
+    'sub/dir/fattura.xml',
+    '....//....//etc/passwd',
+    '',
+    null,
+  ];
+  for (const a of attacks) {
+    const dest = path.join(dir, 'deadbeef_' + safeArchiveName(a));
+    assert.ok(dest.startsWith(dir + path.sep), `escaped the archive dir: ${a}`);
+  }
+  // Real Agenzia delle Entrate filenames must survive untouched.
+  assert.equal(safeArchiveName('IT04204200135_0JILg.xml'), 'IT04204200135_0JILg.xml');
+  assert.equal(safeArchiveName('COPIA_IT04204200135_0KDbm.xml'), 'COPIA_IT04204200135_0KDbm.xml');
+});
+
+test('archiveYear falls back rather than naming a folder from undefined', () => {
+  const { archiveYear } = require('../src/main/invoice-import');
+  assert.equal(archiveYear('2026-08-31'), '2026');
+  assert.equal(archiveYear(undefined), 'senza-data');
+  assert.equal(archiveYear(''), 'senza-data');
+  assert.equal(archiveYear('not-a-date'), 'senza-data');
+});
+
 test('buildManifest refuses to run without the studio identity', () => {
   assert.throws(() => buildManifest(base({ files: [file('passiva-td04-nota-credito.xml')], studioIds: [] })), /studioIds/);
 });
@@ -1791,7 +1820,24 @@ function finalizeRecords({ items, decisions, supplierRules }) {
   return { records, supplierRules: rules };
 }
 
-module.exports = { collectFiles, buildManifest, finalizeRecords, proposeFiscal, proposeClient };
+// Archiving guards live here, exported and pure, so they carry regression tests.
+// They are the only thing standing between a crafted .zip entry name and a
+// write outside the archive directory, and an untested guard is one edit from
+// being dropped by accident.
+function safeArchiveName(fileName) {
+  // Normalize backslashes FIRST: POSIX basename does not treat \ as a
+  // separator, and this app ships Windows builds.
+  return path.basename(String(fileName || '').replace(/[\\]+/g, '/')) || 'fattura.xml';
+}
+
+function archiveYear(date) {
+  return /^\d{4}/.test(String(date)) ? String(date).slice(0, 4) : 'senza-data';
+}
+
+module.exports = {
+  collectFiles, buildManifest, finalizeRecords, proposeFiscal, proposeClient,
+  safeArchiveName, archiveYear,
+};
 ```
 
 - [ ] **Step 5: Run the test to verify it passes**
@@ -1827,7 +1873,7 @@ git commit -m "feat: build import manifest with dedup, client and category propo
 At the top of `src/main/main.js`, next to the existing `AppDB` require:
 
 ```js
-const { collectFiles, buildManifest, finalizeRecords } = require('./invoice-import');
+const { collectFiles, buildManifest, finalizeRecords, safeArchiveName, archiveYear } = require('./invoice-import');
 ```
 
 - [ ] **Step 2: Add the handlers**
@@ -1880,15 +1926,11 @@ In `createWindow()`, immediately after the `db:resetDocCounter` handler, insert:
         // Everything filesystem-related is inside the try, mkdirSync included:
         // a directory that cannot be created must cost this record its archive
         // copy, never the whole batch's invoice data.
-        const year = /^\d{4}/.test(String(rec.date)) ? String(rec.date).slice(0, 4) : 'senza-data';
-        const yearDir = path.join(invoiceArchiveDir, year);
+        const yearDir = path.join(invoiceArchiveDir, archiveYear(rec.date));
         fs.mkdirSync(yearDir, { recursive: true });
-        // fileName can originate in a zip entry, i.e. in the archive's own
-        // bytes. It must never steer the write path: basename() drops directory
-        // components, and normalizing backslashes first covers Windows-style
-        // separators that POSIX basename would otherwise keep.
-        const safeName = path.basename(String(rec.src.fileName || '').replace(/[\\]+/g, '/')) || 'fattura.xml';
-        const dest = path.join(yearDir, `${rec.src.sha256.slice(0, 8)}_${safeName}`);
+        // safeArchiveName keeps a crafted zip-entry name from steering the
+        // write path; it is tested in tests/test-invoice-import.js.
+        const dest = path.join(yearDir, `${rec.src.sha256.slice(0, 8)}_${safeArchiveName(rec.src.fileName)}`);
         if (!fs.existsSync(dest)) fs.copyFileSync(item.file.sourcePath, dest);
         rec.src.archivePath = dest;
       } catch (err) {
