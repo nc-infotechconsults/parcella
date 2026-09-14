@@ -699,7 +699,7 @@ module.exports = { TIPO_DOC, normalizeId, classify, dedupKey };
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `node --test tests/test-fattura-classify.js`
-Expected: PASS — 10 tests.
+Expected: PASS — 11 tests.
 
 Note: `normalizeId('IE1111111AA')` returns `IE1111111AA` unchanged (the `IT` rule only applies to Italian 11-digit VAT numbers), which is why the expected dedup key starts with `IE`.
 
@@ -1344,24 +1344,33 @@ Create `src/shared/categories.js`:
 
   const AMORTIZE_THRESHOLD = 516.46;
 
-  // ORDER IS THE POLICY: first match wins, so concrete/physical categories are
-  // listed before generic ones. A parking invoice reading "Totale soste" and
-  // "Canone abbonamento" must land on Auto, not on Software.
+  // ORDER IS THE POLICY: first match wins, so concrete categories precede
+  // generic ones. A parking invoice reading "Totale soste" and "Canone
+  // abbonamento" must land on Auto, not Software; a line reading "corso" is
+  // training whatever its subject, so Formazione precedes Software.
+  //
+  // Each entry has two halves: STEMS take \w* so Italian inflections match
+  // ("carburant" -> carburante, "pedagg" -> pedaggio/pedaggi), while genuinely
+  // ambiguous short tokens stay whole words so they cannot swallow longer ones
+  // ("monitor" must not match "monitoraggio", "sim" must not match
+  // "simulazione", "volo" must not match "volontariato"). A trailing \b after a
+  // stem is the bug this shape exists to prevent: it silently blocks every
+  // inflected form, dropping real invoices into Altro at 100% deducibilita.
   const KEYWORDS = [
-    [/\b(carburant|benzina|gasolio|pedaggi|autostrad|sosta|soste|parcheggi|noleggio auto|revisione|pneumatic)\b/i, "Auto"],
-    [/\b(notebook|laptop|macbook|monitor|server|stampante|hardware|pc |computer|iphone|ipad|alimentatore)\b/i, "Hardware"],
-    [/\b(abbonament|licen[zc]|subscription|saas|cloud|software|hosting|dominio|github|microsoft|adobe|figma)\b/i, "Software"],
-    [/\b(corso|formazione|training|webinar|master|certificazione)\b/i, "Formazione"],
-    [/\b(telefon|mobile|sim|fibra|adsl|connettivit)\b/i, "Telefonia"],
-    [/\b(energia|elettric|gas|acqua|utenz|bolletta|enel|luce)\b/i, "Utenze"],
-    [/\b(commission|spese bancarie|bollo c\/c|canone conto)\b/i, "Commissioni bancarie"],
-    [/\b(consulen|notaio|commercialista|avvocato|perizia)\b/i, "Consulenze"],
-    [/\b(hotel|albergo|pernottament|b&b)\b/i, "Pernottamento"],
-    [/\b(ristorant|pranzo|cena|bar |catering)\b/i, "Pasti"],
-    [/\b(treno|trenitalia|italo|volo|aereo|taxi|trasfert|biglietto)\b/i, "Trasferta"],
-    [/\b(cancelleri|toner|carta|ufficio)\b/i, "Cancelleria"],
-    [/\b(polizza|assicurazion|rc professionale)\b/i, "Assicurazioni"],
-    [/\b(imposta di bollo|marca da bollo|diritti camerali)\b/i, "Bolli/Tasse"],
+    [/\b(?:carburant|benzina|gasolio|pedagg|autostrad|sost[ae]|parchegg|pneumatic|revision)\w*|\b(?:noleggio auto|gasolio)\b/i, "Auto"],
+    [/\b(?:notebook|laptop|macbook|stampant|hardware|computer|iphone|ipad|alimentator)\w*|\b(?:monitor|server|pc)\b/i, "Hardware"],
+    [/\b(?:corso|corsi|formazion|training|webinar|certificazion)\w*/i, "Formazione"],
+    [/\b(?:abbonament|licen[zc]|subscription|software|hosting|dominio|github|microsoft|adobe|figma)\w*|\b(?:saas|cloud)\b/i, "Software"],
+    [/\b(?:telefon|fibra|connettivit)\w*|\b(?:mobile|sim|adsl)\b/i, "Telefonia"],
+    [/\b(?:energia|elettric|utenz|bolletta|bollette)\w*|\b(?:gas|acqua|enel|luce)\b/i, "Utenze"],
+    [/\b(?:commission)\w*|\b(?:spese bancarie|bollo c\/c|canone conto)\b/i, "Commissioni bancarie"],
+    [/\b(?:consulen|notai|commercialist|avvocat|perizi)\w*/i, "Consulenze"],
+    [/\b(?:albergh|pernottament)\w*|\b(?:hotel|albergo|b&b)\b/i, "Pernottamento"],
+    [/\b(?:ristorant|catering)\w*|\b(?:pranzo|pranzi|cena|cene|bar)\b/i, "Pasti"],
+    [/\b(?:trasfert|bigliett|trenitalia)\w*|\b(?:treno|treni|italo|volo|voli|aereo|taxi)\b/i, "Trasferta"],
+    [/\b(?:cancelleri|toner)\w*|\b(?:carta|ufficio)\b/i, "Cancelleria"],
+    [/\b(?:polizz|assicurazion)\w*|\brc professionale\b/i, "Assicurazioni"],
+    [/\b(?:imposta di bollo|marca da bollo|diritti camerali)\b/i, "Bolli/Tasse"],
   ];
 
   function guessCategory(text) {
@@ -1510,6 +1519,32 @@ test('a TD04 record keeps sign -1 so it subtracts downstream', () => {
   });
   assert.equal(records[0].sign, -1);
   assert.equal(records[0].tipoDoc, 'TD04');
+});
+
+test('category inference handles Italian inflections without over-matching', () => {
+  const { guessCategory } = require('../src/shared/categories');
+  const expected = [
+    ['Canone abbonamento mensile', 'Software'], ['Licenza software annuale', 'Software'],
+    ['Servizio di telefonia mobile', 'Telefonia'], ['Fornitura energia elettrica', 'Utenze'],
+    ['Utenze idriche', 'Utenze'], ['Commissioni bancarie trimestrali', 'Commissioni bancarie'],
+    ['Consulenza fiscale', 'Consulenze'], ['Carburante per autovettura', 'Auto'],
+    ['Pedaggio autostradale', 'Auto'], ['Parcheggio aeroporto', 'Auto'],
+    ['Sostituzione pneumatici', 'Auto'], ['Totale soste (IVA 22.00)', 'Auto'],
+    ['Pernottamento hotel Roma', 'Pernottamento'], ['Cena di lavoro ristorante', 'Pasti'],
+    ['Trasferta Milano', 'Trasferta'], ['Cancelleria varia', 'Cancelleria'],
+    ['Assicurazione RC professionale', 'Assicurazioni'], ['MacBook Pro 14 notebook', 'Hardware'],
+    ['Corso di formazione cloud', 'Formazione'], ['Marca da bollo', 'Bolli/Tasse'],
+  ];
+  for (const [desc, want] of expected) assert.equal(guessCategory(desc), want, desc);
+
+  // Near-misses: these must NOT be captured by the stem they resemble, because
+  // each would propose a wrong deducibilita on a real document.
+  const forbidden = [
+    ["Ritenuta sostituto d'imposta", 'Auto'], ['Servizio di monitoraggio infrastruttura', 'Hardware'],
+    ['Simulazione finanziaria', 'Telefonia'], ['Attivita di volontariato aziendale', 'Trasferta'],
+    ['Prodotti gastronomici', 'Utenze'], ['Mastercard commissioni', 'Formazione'],
+  ];
+  for (const [desc, wrong] of forbidden) assert.notEqual(guessCategory(desc), wrong, desc);
 });
 
 test('buildManifest refuses to run without the studio identity', () => {
