@@ -33,7 +33,7 @@
   // listed before generic ones. A parking invoice reading "Totale soste" and
   // "Canone abbonamento" must land on Auto, not on Software.
   const KEYWORDS = [
-    [/\b(carburant|benzina|gasolio|pedaggi|autostrad|sost\w*|parcheggi|noleggio auto|revisione|pneumatic)\b/i, "Auto"],
+    [/\b(carburant|benzina|gasolio|pedaggi|autostrad|sosta|soste|parcheggi|noleggio auto|revisione|pneumatic)\b/i, "Auto"],
     [/\b(notebook|laptop|macbook|monitor|server|stampante|hardware|pc |computer|iphone|ipad|alimentatore)\b/i, "Hardware"],
     [/\b(abbonament|licen[zc]|subscription|saas|cloud|software|hosting|dominio|github|microsoft|adobe|figma)\b/i, "Software"],
     [/\b(corso|formazione|training|webinar|master|certificazione)\b/i, "Formazione"],
