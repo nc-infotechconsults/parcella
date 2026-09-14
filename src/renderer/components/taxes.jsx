@@ -100,16 +100,22 @@ function computeTaxes(activities, expenses, fiscal, year, clients, studio, invoi
     { id: "Q4", label: "4° trim (ott-dic)", deadline: "16 marzo anno succ.", months: ["10","11","12"], paid: fiscal.ivaQ4Paid },
   ];
   const trimestri = ivaDeadlines.map(qt => {
-    const period = fy.periods.find(p => p.id === qt.id) || { ivaDebito: 0, ivaCredito: 0, ivaReverse: 0, saldo: 0 };
+    // computeFiscalYear returns four quarters under quarterly liquidation and
+    // twelve months under monthly. Match on the months each period covers
+    // rather than on its id, and fold whatever we got into this table's four
+    // rows: matching by id would silently render every quarter as zero for a
+    // profile set to 'mensile'.
+    const parts = fy.periods.filter(p => p.months.every(m => qt.months.includes(m)));
+    const sum = pick => Math.round(parts.reduce((s, p) => s + (p[pick] || 0), 0) * 100) / 100;
     return {
       ...qt,
-      debit: period.ivaDebito,
-      credit: period.ivaCredito,
-      reverse: period.ivaReverse,
-      saldo: period.saldo,
+      debit: sum('ivaDebito'),
+      credit: sum('ivaCredito'),
+      reverse: sum('ivaReverse'),
+      saldo: sum('saldo'),
       // The F24 generator below reads `balance`; the liquidation saldo is what
       // actually gets paid, so it keeps that name too.
-      balance: period.saldo,
+      balance: sum('saldo'),
     };
   });
 
