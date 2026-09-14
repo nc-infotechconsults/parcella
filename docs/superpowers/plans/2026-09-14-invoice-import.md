@@ -14,7 +14,7 @@
 
 - **P1 — Imported data is immutable.** Every XML-derived field is read-only forever. Re-importing the same document never rewrites it. Only `clientId`, `linkedMonthKey`, `fiscal`, `settlement`, `notes`, `reviewedAt` are editable.
 - **P2 — Nothing is applied without confirmation.** Scan is a dry run; no DB write, no file copy, until the user confirms the manifest.
-- **P3 — Reverse charge is one document.** TD16–TD19 are always `direction: "passive"`, `reverseCharge: true`; imponibile is a cost and never revenue; imposta counts as debito *and* credito in the same period.
+- **P3 — Reverse charge is one document.** TD16–TD19 are always `direction: "passive"`, `reverseCharge: true`; imponibile is a cost and never revenue; imposta counts as debito *and* credito in the same period. The sides cancel at full detraction; where `vatDetractPct < 100` the non-detraibile share correctly remains owed.
 - **P4 — Two dates.** IVA is placed by `date` (document date). Ricavi/costi for IRPEF are placed by `settlement.date` (cassa).
 - **No double counting.** A timesheet (client, month) pair contributes to the forecast only when no active invoice is linked to it.
 - Money helper everywhere: `Math.round(n * 100) / 100`. Never compare floats for equality in tests without a tolerance.
