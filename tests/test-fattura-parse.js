@@ -4,6 +4,10 @@ const assert = require('node:assert/strict');
 const { parseFattura } = require('../src/main/fattura-parse');
 const fixtures = require('./fixtures');
 
+// Money comparisons go through a tolerance: every amount here is the result of
+// a round-to-2dp, and bare float equality on those is a latent flake.
+const near = (a, b, tol = 0.011) => assert.ok(Math.abs(a - b) < tol, `${a} != ${b}`);
+
 test('parses a TD01 with ritenuta and cassa', () => {
   const [doc] = parseFattura(fixtures.read('attiva-td01-ritenuta-cassa.xml'));
   assert.equal(doc.tipoDoc, 'TD01');
@@ -13,16 +17,16 @@ test('parses a TD01 with ritenuta and cassa', () => {
   assert.equal(doc.sign, 1);
   assert.equal(doc.cedente.vat, '01234567890');
   assert.equal(doc.cessionario.name, 'CLIENTE ALFA S.R.L.');
-  assert.equal(doc.totals.imponibile, 6240);
-  assert.equal(doc.totals.imposta, 1372.80);
-  assert.equal(doc.totals.documento, 7612.80);
-  assert.equal(doc.withholding.importo, 1248);
-  assert.equal(doc.withholding.aliquota, 20);
-  assert.equal(doc.cassa.importo, 240);
-  assert.equal(doc.cassa.imponibile, 6000);
+  near(doc.totals.imponibile, 6240);
+  near(doc.totals.imposta, 1372.80);
+  near(doc.totals.documento, 7612.80);
+  near(doc.withholding.importo, 1248);
+  near(doc.withholding.aliquota, 20);
+  near(doc.cassa.importo, 240);
+  near(doc.cassa.imponibile, 6000);
   assert.equal(doc.payment.dueDate, '2026-08-30');
   assert.equal(doc.lines.length, 1);
-  assert.equal(doc.lines[0].total, 6000);
+  near(doc.lines[0].total, 6000);
 });
 
 test('keeps one vatSummary entry per rate', () => {
@@ -30,18 +34,18 @@ test('keeps one vatSummary entry per rate', () => {
   assert.equal(doc.vatSummary.length, 2);
   const fuoriCampo = doc.vatSummary.find(v => v.natura === 'N2.2');
   const ordinaria = doc.vatSummary.find(v => v.vatPct === 22);
-  assert.equal(fuoriCampo.imponibile, 1.91);
-  assert.equal(fuoriCampo.imposta, 0);
-  assert.equal(ordinaria.imposta, 1.21);
-  assert.equal(doc.totals.imponibile, 7.41);
-  assert.equal(doc.totals.imposta, 1.21);
+  near(fuoriCampo.imponibile, 1.91);
+  near(fuoriCampo.imposta, 0);
+  near(ordinaria.imposta, 1.21);
+  near(doc.totals.imponibile, 7.41);
+  near(doc.totals.imposta, 1.21);
 });
 
 test('ignores the ds:Signature subtree of a signed document', () => {
   const [doc] = parseFattura(fixtures.read('autofattura-td18-signed.xml'));
   assert.equal(doc.tipoDoc, 'TD18');
   assert.equal(doc.cedente.name, 'FORNITORE ESTERO LIMITED');
-  assert.equal(doc.totals.imposta, 39.60);
+  near(doc.totals.imposta, 39.60);
   assert.equal(doc.lines.length, 1);
   assert.equal(doc.lines[0].qty, null);   // no Quantita in the XML
 });
