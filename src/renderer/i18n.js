@@ -65,6 +65,23 @@
       'inv.settlementDate': 'Data saldo',
       'inv.notes': 'Note',
 
+      // Import wizard
+      'imp.title': 'Importa fatture elettroniche',
+      'imp.pick': 'Scegli cartella o file…',
+      'imp.hint': 'Supporta .xml, .xml.p7m e .zip. Nulla viene salvato finché non confermi.',
+      'imp.scanning': 'Lettura file in corso…',
+      'imp.new': 'Nuove',
+      'imp.duplicates': 'Duplicati nel batch',
+      'imp.already': 'Già importate',
+      'imp.toReview': 'Da rivedere',
+      'imp.discarded': 'Scartate',
+      'imp.selectAll': 'Seleziona tutte',
+      'imp.remember': 'Ricorda per questo fornitore',
+      'imp.confirm': 'Conferma e importa',
+      'imp.done': 'Importate {n} fatture',
+      'imp.noStudio': 'Imposta P.IVA e Codice Fiscale in Impostazioni prima di importare.',
+      'imp.selectClient': '— cliente —',
+
       // Common actions
       'action.save': 'Salva',
       'action.saveChanges': 'Salva modifiche',
@@ -472,6 +489,23 @@
       'inv.summaryRow': 'Summary',
       'inv.settlementDate': 'Settlement date',
       'inv.notes': 'Notes',
+
+      // Import wizard
+      'imp.title': 'Import e-invoices',
+      'imp.pick': 'Choose folder or files…',
+      'imp.hint': 'Supports .xml, .xml.p7m and .zip. Nothing is saved until you confirm.',
+      'imp.scanning': 'Reading files…',
+      'imp.new': 'New',
+      'imp.duplicates': 'Duplicates in batch',
+      'imp.already': 'Already imported',
+      'imp.toReview': 'To review',
+      'imp.discarded': 'Skipped',
+      'imp.selectAll': 'Select all',
+      'imp.remember': 'Remember for this supplier',
+      'imp.confirm': 'Confirm and import',
+      'imp.done': 'Imported {n} invoices',
+      'imp.noStudio': 'Set your VAT number and tax code in Settings before importing.',
+      'imp.selectClient': '— client —',
 
       // Common
       'action.save': 'Save',

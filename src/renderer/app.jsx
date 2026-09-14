@@ -195,6 +195,7 @@ const App = () => {
   useEffect(() => { if (loaded && !showWelcome) dbSave('supplierRules', supplierRules); }, [supplierRules, loaded, showWelcome]);
   useEffect(() => { if (loaded && !showWelcome && studio) dbSave('studio', studio); }, [studio, loaded, showWelcome]);
   useEffect(() => { if (loaded && !showWelcome && fiscal) dbSave('fiscal', fiscal); }, [fiscal, loaded, showWelcome]);
+  useEffect(() => { window.__clients = clients; }, [clients]);
 
   const currentMonthKey = monthKey(year, month);
   const navMonth = (delta) => {
@@ -280,6 +281,16 @@ const App = () => {
   const handleDeleteInvoice = (id) => {
     setInvoices(list => list.filter(i => i.id !== id));
     window.showToast('Fattura rimossa', 'info');
+  };
+
+  const handleImported = ({ records, supplierRules: rules }) => {
+    setInvoices(list => {
+      const byId = new Map(list.map(i => [i.id, i]));
+      records.forEach(r => byId.set(r.id, r));
+      return Array.from(byId.values());
+    });
+    if (rules) setSupplierRules(rules);
+    window.showToast(`Importate ${records.length} fatture`, 'success');
   };
 
   const handleResetData = () => {
@@ -406,6 +417,11 @@ const App = () => {
       {editingInvoice && <InvoiceDrawer
         invoice={editingInvoice} clients={clients}
         onSave={handleSaveInvoice} onClose={() => setEditingInvoice(null)} />}
+
+      {importOpen && <InvoiceImportWizard
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        onImported={handleImported} />}
 
       <ToastContainer />
 
