@@ -6,7 +6,7 @@ class AppDBJson {
   constructor(dbPath) {
     this.filePath = dbPath.replace(/\.db$/, '.json');
     this._empty = true;
-    this._data = { clients: [], activities: [], expenses: [], invoices: [], studio: null, fiscal: null, supplierRules: {} };
+    this._data = { clients: [], activities: [], expenses: [], invoices: [], studio: null, fiscal: null, supplierRules: {}, categories: {} };
     this._load();
   }
 

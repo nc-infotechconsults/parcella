@@ -7,24 +7,31 @@
   if (typeof window !== 'undefined') Object.assign(window, api);
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
 
+  // Purchase treatment follows the KIND OF GOOD, not the individual document, so
+  // it lives on the category. vatDetractPct matters as much as deductPct: IVA on
+  // a car is 40% detraibile and on mobile telephony 50%, regardless of how the
+  // cost itself is deducted. amortize/amortYears make "this category is a
+  // capital good" a property of the category rather than a rule hardcoded for
+  // Hardware. These are DEFAULTS: the user's own edits are stored separately and
+  // merged over them by effectiveCategories().
   const CATEGORY_RULES = {
-    "Trasferta": { deductPct: 100, vatPct: 10, vatExempt: false },
-    "Pasti": { deductPct: 75, vatPct: 10, vatExempt: false, hint: "Pasti deducibili 75% (art. 109 TUIR)" },
-    "Pernottamento": { deductPct: 75, vatPct: 10, vatExempt: false },
-    "Software": { deductPct: 100, vatPct: 22, vatExempt: false },
-    "Stock photo": { deductPct: 100, vatPct: 22, vatExempt: false },
-    "Cancelleria": { deductPct: 100, vatPct: 22, vatExempt: false },
-    "Formazione": { deductPct: 100, vatPct: 22, vatExempt: false },
-    "Telefonia": { deductPct: 80, vatPct: 22, vatExempt: false, hint: "Telefonia deducibile 80% (art. 102 TUIR)" },
-    "Utenze": { deductPct: 100, vatPct: 22, vatExempt: false, hint: "Energia, gas, internet dello studio" },
-    "Commissioni bancarie": { deductPct: 100, vatPct: 0, vatExempt: true, hint: "Esenti IVA art. 10 DPR 633/72" },
-    "Consulenze": { deductPct: 100, vatPct: 22, vatExempt: false },
-    "Auto": { deductPct: 20, vatPct: 22, vatExempt: false, hint: "Auto non strumentale: deducibilità 20%" },
-    "Rimborso km": { deductPct: 100, vatPct: 0, vatExempt: true, hint: "Rimborso chilometrico al tasso ACI (fuori campo IVA). Importo = km × tariffa ACI vigente." },
-    "Hardware": { deductPct: 100, vatPct: 22, vatExempt: false, hint: "Cespite > 516,46€ → ammortamento pluriennale" },
-    "Assicurazioni": { deductPct: 100, vatPct: 0, vatExempt: true, hint: "Assicurazioni esenti IVA art. 10 DPR 633/72" },
-    "Bolli/Tasse": { deductPct: 100, vatPct: 0, vatExempt: true, hint: "Operazioni fuori campo IVA" },
-    "Altro": { deductPct: 100, vatPct: 22, vatExempt: false },
+    "Trasferta": { deductPct: 100, vatDetractPct: 100, vatPct: 10, vatExempt: false },
+    "Pasti": { deductPct: 75, vatDetractPct: 100, vatPct: 10, vatExempt: false, hint: "Pasti deducibili 75% (art. 109 TUIR)" },
+    "Pernottamento": { deductPct: 75, vatDetractPct: 100, vatPct: 10, vatExempt: false },
+    "Software": { deductPct: 100, vatDetractPct: 100, vatPct: 22, vatExempt: false },
+    "Stock photo": { deductPct: 100, vatDetractPct: 100, vatPct: 22, vatExempt: false },
+    "Cancelleria": { deductPct: 100, vatDetractPct: 100, vatPct: 22, vatExempt: false },
+    "Formazione": { deductPct: 100, vatDetractPct: 100, vatPct: 22, vatExempt: false },
+    "Telefonia": { deductPct: 80, vatDetractPct: 50, vatPct: 22, vatExempt: false, hint: "Telefonia: costo 80% (art. 102 TUIR), IVA 50% (art. 19-bis1)" },
+    "Utenze": { deductPct: 100, vatDetractPct: 100, vatPct: 22, vatExempt: false, hint: "Energia, gas, internet dello studio" },
+    "Commissioni bancarie": { deductPct: 100, vatDetractPct: 0, vatPct: 0, vatExempt: true, hint: "Esenti IVA art. 10 DPR 633/72" },
+    "Consulenze": { deductPct: 100, vatDetractPct: 100, vatPct: 22, vatExempt: false },
+    "Auto": { deductPct: 20, vatDetractPct: 40, vatPct: 22, vatExempt: false, hint: "Auto non strumentale: costo 20%, IVA 40% (art. 19-bis1)" },
+    "Rimborso km": { deductPct: 100, vatDetractPct: 0, vatPct: 0, vatExempt: true, hint: "Rimborso chilometrico al tasso ACI (fuori campo IVA). Importo = km × tariffa ACI vigente." },
+    "Hardware": { deductPct: 100, vatDetractPct: 100, vatPct: 22, vatExempt: false, amortize: true, amortYears: 4, hint: "Cespite oltre 516,46€ → ammortamento pluriennale" },
+    "Assicurazioni": { deductPct: 100, vatDetractPct: 0, vatPct: 0, vatExempt: true, hint: "Assicurazioni esenti IVA art. 10 DPR 633/72" },
+    "Bolli/Tasse": { deductPct: 100, vatDetractPct: 0, vatPct: 0, vatExempt: true, hint: "Operazioni fuori campo IVA" },
+    "Altro": { deductPct: 100, vatDetractPct: 100, vatPct: 22, vatExempt: false },
   };
 
   const AMORTIZE_THRESHOLD = 516.46;
@@ -72,20 +79,35 @@
   // how a stale `amortize` — a wrong tax treatment — gets left behind.
   function fiscalForCategory(category, opts) {
     const o = opts || {};
-    const rule = CATEGORY_RULES[category] || CATEGORY_RULES.Altro;
+    const rules = o.rules || CATEGORY_RULES;
+    const rule = rules[category] || rules.Altro || CATEGORY_RULES.Altro;
     const sign = o.sign == null ? 1 : o.sign;
-    // A credit note is a return, not an acquisition: it can never open a schedule.
-    const amortize = sign > 0 && category === 'Hardware'
+    // Three conditions, all required: the category has to be a capital good, the
+    // document has to be an acquisition (a credit note never opens a schedule),
+    // and the amount has to clear the threshold — a 30-euro cable filed under
+    // Hardware is a cost, not a cespite.
+    const amortize = rule.amortize === true
+      && sign > 0
       && (o.imponibile || 0) >= AMORTIZE_THRESHOLD;
     return {
       category,
-      deductPct: rule.deductPct,
-      vatDetractPct: o.vatDetractPct == null ? 100 : o.vatDetractPct,
+      deductPct: rule.deductPct == null ? 100 : rule.deductPct,
+      vatDetractPct: rule.vatDetractPct == null ? 100 : rule.vatDetractPct,
       amortize,
-      amortYears: amortize ? (o.amortYears || 4) : null,
+      amortYears: amortize ? (rule.amortYears || o.amortYears || 4) : null,
       firstYearHalf: amortize,
     };
   }
 
-  return { CATEGORY_RULES, AMORTIZE_THRESHOLD, guessCategory, fiscalForCategory };
+  // The user's saved edits merged over the built-in defaults. Stored separately
+  // so a future default can still reach a user who never touched that category,
+  // and so "reset" is just dropping the override.
+  function effectiveCategories(saved) {
+    const out = {};
+    for (const [name, rule] of Object.entries(CATEGORY_RULES)) out[name] = { ...rule };
+    for (const [name, rule] of Object.entries(saved || {})) out[name] = { ...(out[name] || {}), ...rule };
+    return out;
+  }
+
+  return { CATEGORY_RULES, AMORTIZE_THRESHOLD, guessCategory, fiscalForCategory, effectiveCategories };
 });

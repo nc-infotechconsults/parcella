@@ -38,7 +38,7 @@ function proposeClient(counterparty, clients) {
   return match || null;
 }
 
-function proposeFiscal(doc, counterparty, supplierRules) {
+function proposeFiscal(doc, counterparty, supplierRules, categories) {
   const supplierKey = normalizeId(counterparty.vat) || normalizeId(counterparty.cf);
   const remembered = (supplierRules || {})[supplierKey];
   if (remembered) {
@@ -63,10 +63,11 @@ function proposeFiscal(doc, counterparty, supplierRules) {
     sign: doc.sign,
     imponibile: doc.totals.imponibile,
     amortYears: DEFAULT_AMORT_YEARS,
+    rules: categories,          // the user's edited rules, when there are any
   });
 }
 
-function buildManifest({ files, existing, clients, supplierRules, studioIds }) {
+function buildManifest({ files, existing, clients, supplierRules, studioIds, categories }) {
   const seenKeys = new Set();
   const importedKeys = new Set((existing && existing.dedupKeys) || []);
   const importedHashes = new Set((existing && existing.hashes) || []);
@@ -145,7 +146,7 @@ function buildManifest({ files, existing, clients, supplierRules, studioIds }) {
             clientId: client ? client.id : null,
             clientName: client ? client.name : null,
             linkedMonthKey,
-            fiscal: cls.direction === 'passive' ? proposeFiscal(doc, cls.counterparty, supplierRules) : null,
+            fiscal: cls.direction === 'passive' ? proposeFiscal(doc, cls.counterparty, supplierRules, categories) : null,
             settlement: {
               status: 'open',
               date: null,

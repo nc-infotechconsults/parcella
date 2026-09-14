@@ -50,8 +50,7 @@ const InvoiceImportWizard = ({ open, onClose, onImported }) => {
   const fiscalForCategory = (item, fiscal, cat) => window.fiscalForCategory(cat, {
     sign: item.doc.sign,
     imponibile: item.doc.totals.imponibile,
-    vatDetractPct: fiscal ? fiscal.vatDetractPct : 100,
-    amortYears: fiscal ? fiscal.amortYears : null,
+    rules: window.CATEGORY_RULES,   // the user's edited rules, not the defaults
   });
 
   const settlementOf = it => (decisions[it.id] && decisions[it.id].settlement) || it.proposal.settlement;

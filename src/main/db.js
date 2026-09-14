@@ -61,6 +61,7 @@ class AppDB {
     const studio     = this._getKV('studio');
     const fiscal     = this._getKV('fiscal');
     const supplierRules = this._getKV('supplierRules') || {};
+    const categories = this._getKV('categories') || {};
     const docCounters = {};
     const counterRows = this.db.prepare("SELECT key, value FROM kv WHERE key LIKE 'docCounter_%'").all();
     for (const row of counterRows) {
@@ -68,7 +69,7 @@ class AppDB {
       docCounters[year] = Number(JSON.parse(row.value)) || 0;
     }
     return {
-      clients, activities, expenses, invoices, studio, fiscal, docCounters, supplierRules,
+      clients, activities, expenses, invoices, studio, fiscal, docCounters, supplierRules, categories,
       empty: clients.length === 0 && invoices.length === 0 && !studio,
     };
   }
@@ -151,6 +152,7 @@ class AppDB {
       if (data.expenses)   this.saveCollection('expenses', data.expenses);
       if (data.invoices)      this.saveCollection('invoices', data.invoices);
       if (data.supplierRules) this._setKV('supplierRules', data.supplierRules);
+      if (data.categories)    this._setKV('categories', data.categories);
       if (data.studio)     this._setKV('studio', data.studio);
       if (data.fiscal)     this._setKV('fiscal', data.fiscal);
       if (data.docCounters) {

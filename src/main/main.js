@@ -165,7 +165,7 @@ function createWindow() {
   });
 
   ipcMain.handle('invoices:scan', (_, { paths }) => {
-    const { invoices, clients, supplierRules } = db.loadAll();
+    const { invoices, clients, supplierRules, categories } = db.loadAll();
     const files = collectFiles(paths);
     return buildManifest({
       files,
@@ -175,6 +175,7 @@ function createWindow() {
       },
       clients,
       supplierRules,
+      categories,
       studioIds: studioIdentity(),
     });
   });

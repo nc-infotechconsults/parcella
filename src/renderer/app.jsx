@@ -9,6 +9,7 @@ async function dbLoadAll() {
     expenses:   AppStorage.load(AppStorage.KEYS.expenses, null),
     invoices:   AppStorage.load(AppStorage.KEYS.invoices, null),
     supplierRules: AppStorage.load('supplierRules', null),
+    categories:    AppStorage.load('categories', null),
     studio:     AppStorage.load(AppStorage.KEYS.studio, null),
     fiscal:     AppStorage.load(AppStorage.KEYS.fiscal, null),
     empty:      !AppStorage.load(AppStorage.KEYS.clients, null),
@@ -17,7 +18,7 @@ async function dbLoadAll() {
 
 function dbSave(key, data) {
   if (window.api?.db) {
-    const isKV = key === 'studio' || key === 'fiscal' || key === 'supplierRules';
+    const isKV = key === 'studio' || key === 'fiscal' || key === 'supplierRules' || key === 'categories';
     (isKV ? window.api.db.saveKV(key, data) : window.api.db.saveCollection(key, data)).catch(console.error);
   } else {
     AppStorage.save(AppStorage.KEYS[key] || key, data);
@@ -115,6 +116,7 @@ const App = () => {
   const [expenses, setExpenses] = useState([]);
   const [invoices, setInvoices] = useState([]);
   const [supplierRules, setSupplierRules] = useState({});
+  const [categories, setCategories] = useState({});
   const [importOpen, setImportOpen] = useState(false);
   const [editingInvoice, setEditingInvoice] = useState(null);
   const [studio, setStudio] = useState(null);
@@ -138,6 +140,7 @@ const App = () => {
       setExpenses(data.expenses  || []);
       setInvoices(data.invoices || []);
       setSupplierRules(data.supplierRules || {});
+      setCategories(data.categories || {});
       setStudio(data.studio    || window.APP_DATA.user);
       setFiscal(data.fiscal    || window.APP_DATA.fiscal);
       setLoaded(true);
@@ -193,9 +196,13 @@ const App = () => {
   useEffect(() => { if (loaded && !showWelcome) dbSave('expenses',   expenses); }, [expenses, loaded, showWelcome]);
   useEffect(() => { if (loaded && !showWelcome) dbSave('invoices', invoices); }, [invoices, loaded, showWelcome]);
   useEffect(() => { if (loaded && !showWelcome) dbSave('supplierRules', supplierRules); }, [supplierRules, loaded, showWelcome]);
+  useEffect(() => { if (loaded && !showWelcome) dbSave('categories', categories); }, [categories, loaded, showWelcome]);
   useEffect(() => { if (loaded && !showWelcome && studio) dbSave('studio', studio); }, [studio, loaded, showWelcome]);
   useEffect(() => { if (loaded && !showWelcome && fiscal) dbSave('fiscal', fiscal); }, [fiscal, loaded, showWelcome]);
   useEffect(() => { window.__clients = clients; }, [clients]);
+  // Every screen reads window.CATEGORY_RULES; point it at the user's edited
+  // rules merged over the defaults, so one assignment reaches all of them.
+  useEffect(() => { window.CATEGORY_RULES = window.effectiveCategories(categories); }, [categories]);
 
   const currentMonthKey = monthKey(year, month);
   const navMonth = (delta) => {
@@ -392,7 +399,8 @@ const App = () => {
             onImport={() => setImportOpen(true)}
             onEdit={setEditingInvoice} onDelete={handleDeleteInvoice}
           onBulkUpdate={handleBulkUpdateInvoices} onBulkDelete={handleBulkDeleteInvoices} />}
-          {view === "settings" && <Settings user={s} onSave={d => setStudio(d)} onResetData={handleResetData} />}
+          {view === "settings" && <Settings user={s} onSave={d => setStudio(d)} onResetData={handleResetData}
+            categories={categories} onSaveCategories={c => { setCategories(c); window.showToast(t('cat.saved'), 'success'); }} />}
           {view === "taxes" && <Taxes activities={activities} expenses={expenses} fiscal={fiscal || window.APP_DATA.fiscal}
             clients={clients} studio={s} invoices={invoices} year={year}
             onUpdateFiscal={f => setFiscal(f)} />}

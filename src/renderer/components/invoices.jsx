@@ -43,9 +43,16 @@ const Invoices = ({ invoices, clients, expenses, fiscal, currentYear, onImport, 
   const bulkCategory = cat => onBulkUpdate(
     selInvoices().filter(i => i.direction === 'passive').map(i => i.id),
     inv => ({ fiscal: window.fiscalForCategory(cat, {
-      sign: inv.sign, imponibile: inv.totals.imponibile,
-      vatDetractPct: inv.fiscal ? inv.fiscal.vatDetractPct : 100,
-      amortYears: inv.fiscal ? inv.fiscal.amortYears : null,
+      sign: inv.sign, imponibile: inv.totals.imponibile, rules: window.CATEGORY_RULES,
+    }) }));
+
+  // Categories are a snapshot: an invoice keeps what it was classified with, so a
+  // year already declared never moves on its own. This is the explicit way to
+  // pull the current rules onto documents you choose.
+  const bulkReapply = () => onBulkUpdate(
+    selInvoices().filter(i => i.fiscal && i.fiscal.category).map(i => i.id),
+    inv => ({ fiscal: window.fiscalForCategory(inv.fiscal.category, {
+      sign: inv.sign, imponibile: inv.totals.imponibile, rules: window.CATEGORY_RULES,
     }) }));
   const bulkClient = clientId => onBulkUpdate(
     selInvoices().filter(i => i.direction === 'active').map(i => i.id),
@@ -159,6 +166,7 @@ const Invoices = ({ invoices, clients, expenses, fiscal, currentYear, onImport, 
               {/* Unlike the wizard's "exclude", this one really deletes: the records
                   are already in the ledger and their revenue and IVA are in every
                   declared figure. Hence the count in the confirmation. */}
+              <button className="btn btn-sm" onClick={bulkReapply}>{t('inv.bulkReapply')}</button>
               <button className="btn btn-sm" style={{ color: 'var(--danger)' }}
                 onClick={bulkDelete}>{t('inv.bulkDelete')}</button>
             </div>
@@ -345,9 +353,10 @@ const InvoiceDrawer = ({ invoice, clients, onSave, onClose }) => {
               <label>{t('inv.category')}</label>
               <select className="select" value={edit.fiscal.category}
                 onChange={e => {
-                  const cat = e.target.value;
-                  const r = window.CATEGORY_RULES[cat];
-                  setFiscal({ category: cat, deductPct: r ? r.deductPct : 100 });
+                  setFiscal(window.fiscalForCategory(e.target.value, {
+                    sign: invoice.sign, imponibile: invoice.totals.imponibile,
+                    rules: window.CATEGORY_RULES,
+                  }));
                 }}>
                 {Object.keys(window.CATEGORY_RULES).map(c => <option key={c} value={c}>{c}</option>)}
               </select>

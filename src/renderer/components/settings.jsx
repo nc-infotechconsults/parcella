@@ -251,7 +251,78 @@ const DataBackupTab = ({ onResetData }) => {
 };
 
 // ── Profilo & impostazioni ────────────────────────────────────────────────────
-const Settings = ({ user, onSave, onResetData }) => {
+// Purchase treatment belongs to the KIND OF GOOD, so it is edited once here
+// rather than on every document. Saved edits are stored as overrides and merged
+// over the built-in defaults; existing invoices keep the values they were
+// classified with, and only change if you explicitly re-apply.
+const CategoryRulesTab = ({ categories, onSaveCategories }) => {
+  const effective = window.effectiveCategories(categories);
+  const [draft, setDraft] = useState(effective);
+  const set = (name, patch) => setDraft(d => ({ ...d, [name]: { ...d[name], ...patch } }));
+  const num = v => Math.min(100, Math.max(0, Number(v) || 0));
+  const changed = JSON.stringify(draft) !== JSON.stringify(effective);
+
+  return (
+    <div className="card">
+      <div className="card-header">
+        <strong>{t('cat.title')}</strong>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="btn btn-ghost btn-sm" disabled={!changed}
+            onClick={() => setDraft(effective)}>{t('action.cancel')}</button>
+          <button className="btn btn-primary btn-sm" disabled={!changed}
+            onClick={() => onSaveCategories(draft)}>{t('action.save')}</button>
+        </div>
+      </div>
+      <div className="hint" style={{ padding: '0 16px 8px' }}>{t('cat.hint')}</div>
+      <div style={{ overflowX: 'auto' }}>
+        <table className="data">
+          <thead>
+            <tr>
+              <th>{t('inv.category')}</th>
+              <th className="num" style={{ width: 120 }}>{t('cat.deduct')}</th>
+              <th className="num" style={{ width: 130 }}>{t('cat.vatDetract')}</th>
+              <th style={{ width: 170 }}>{t('cat.amort')}</th>
+              <th>{t('cat.note')}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {Object.keys(draft).sort().map(name => {
+              const r = draft[name];
+              return (
+                <tr key={name}>
+                  <td><strong>{name}</strong></td>
+                  <td className="num">
+                    <input type="number" className="input mono" min="0" max="100" style={{ width: 80 }}
+                      value={r.deductPct == null ? 100 : r.deductPct}
+                      onChange={e => set(name, { deductPct: num(e.target.value) })} />
+                  </td>
+                  <td className="num">
+                    <input type="number" className="input mono" min="0" max="100" style={{ width: 80 }}
+                      value={r.vatDetractPct == null ? 100 : r.vatDetractPct}
+                      onChange={e => set(name, { vatDetractPct: num(e.target.value) })} />
+                  </td>
+                  <td>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <input type="checkbox" checked={!!r.amortize}
+                        onChange={e => set(name, { amortize: e.target.checked, amortYears: e.target.checked ? (r.amortYears || 4) : null })} />
+                      <input type="number" className="input mono" style={{ width: 60 }} min="1" max="20"
+                        disabled={!r.amortize} value={r.amortYears || 4}
+                        onChange={e => set(name, { amortYears: Math.max(1, Number(e.target.value) || 4) })} />
+                      <span className="hint">{t('cat.years')}</span>
+                    </label>
+                  </td>
+                  <td className="hint">{r.hint || ''}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+};
+
+const Settings = ({ user, onSave, onResetData, categories, onSaveCategories }) => {
   const [data, setData] = useState(user);
   const [tab, setTab] = useState("profile");
   const update = (patch) => setData(d => ({ ...d, ...patch }));
@@ -268,6 +339,7 @@ const Settings = ({ user, onSave, onResetData }) => {
         <button className={tab === "fiscal" ? "active" : ""} onClick={() => setTab("fiscal")}>{t('set.fiscal')}</button>
         <button className={tab === "branding" ? "active" : ""} onClick={() => setTab("branding")}>{t('set.branding')}</button>
         <button className={tab === "preferences" ? "active" : ""} onClick={() => setTab("preferences")}>{t('set.preferences')}</button>
+        <button className={tab === "categories" ? "active" : ""} onClick={() => setTab("categories")}>{t('set.categories')}</button>
         <button className={tab === "data" ? "active" : ""} onClick={() => setTab("data")}>{t('set.data')}</button>
       </div>
 
@@ -545,6 +617,7 @@ const Settings = ({ user, onSave, onResetData }) => {
         </div>
       )}
 
+      {tab === "categories" && <CategoryRulesTab categories={categories} onSaveCategories={onSaveCategories} />}
       {tab === "data" && <DataBackupTab onResetData={onResetData} />}
 
       {tab !== "data" && (
