@@ -38,8 +38,18 @@ class AppDB {
         data      TEXT NOT NULL,
         ts        INTEGER DEFAULT (strftime('%s','now'))
       );
+      CREATE TABLE IF NOT EXISTS invoices (
+        id        TEXT PRIMARY KEY,
+        direction TEXT,
+        month_key TEXT,
+        dedup_key TEXT UNIQUE,
+        data      TEXT NOT NULL,
+        ts        INTEGER DEFAULT (strftime('%s','now'))
+      );
       CREATE INDEX IF NOT EXISTS idx_act_month ON activities(month_key);
       CREATE INDEX IF NOT EXISTS idx_exp_month ON expenses(month_key);
+      CREATE INDEX IF NOT EXISTS idx_inv_month ON invoices(month_key);
+      CREATE INDEX IF NOT EXISTS idx_inv_dir   ON invoices(direction);
     `);
   }
 
@@ -47,15 +57,20 @@ class AppDB {
     const clients    = this.db.prepare('SELECT data FROM clients ORDER BY rowid').all().map(r => JSON.parse(r.data));
     const activities = this.db.prepare('SELECT data FROM activities ORDER BY month_key, ts').all().map(r => JSON.parse(r.data));
     const expenses   = this.db.prepare('SELECT data FROM expenses ORDER BY month_key, ts').all().map(r => JSON.parse(r.data));
+    const invoices   = this.db.prepare("SELECT data FROM invoices ORDER BY date(json_extract(data,'$.date')), rowid").all().map(r => JSON.parse(r.data));
     const studio     = this._getKV('studio');
     const fiscal     = this._getKV('fiscal');
+    const supplierRules = this._getKV('supplierRules') || {};
     const docCounters = {};
     const counterRows = this.db.prepare("SELECT key, value FROM kv WHERE key LIKE 'docCounter_%'").all();
     for (const row of counterRows) {
       const year = row.key.replace('docCounter_', '');
       docCounters[year] = Number(JSON.parse(row.value)) || 0;
     }
-    return { clients, activities, expenses, studio, fiscal, docCounters, empty: clients.length === 0 && !studio };
+    return {
+      clients, activities, expenses, invoices, studio, fiscal, docCounters, supplierRules,
+      empty: clients.length === 0 && invoices.length === 0 && !studio,
+    };
   }
 
   _getKV(key) {
@@ -67,14 +82,21 @@ class AppDB {
     this.db.prepare("INSERT OR REPLACE INTO kv (key,value,ts) VALUES (?,?,strftime('%s','now'))").run(key, JSON.stringify(value));
   }
 
+  getKV(key) {
+    return this._getKV(key);
+  }
+
   saveCollection(key, data) {
-    const allowed = ['clients', 'activities', 'expenses'];
+    const allowed = ['clients', 'activities', 'expenses', 'invoices'];
     if (!allowed.includes(key)) throw new Error('Unknown collection: ' + key);
 
     const isClients = key === 'clients';
+    const isInvoices = key === 'invoices';
     const upsert = isClients
       ? this.db.prepare(`INSERT OR REPLACE INTO clients (id, data, ts) VALUES (?, ?, strftime('%s','now'))`)
-      : this.db.prepare(`INSERT OR REPLACE INTO ${key} (id, client_id, month_key, data, ts) VALUES (?, ?, ?, ?, strftime('%s','now'))`);
+      : isInvoices
+        ? this.db.prepare(`INSERT OR REPLACE INTO invoices (id, direction, month_key, dedup_key, data, ts) VALUES (?, ?, ?, ?, ?, strftime('%s','now'))`)
+        : this.db.prepare(`INSERT OR REPLACE INTO ${key} (id, client_id, month_key, data, ts) VALUES (?, ?, ?, ?, strftime('%s','now'))`);
 
     this.db.transaction(() => {
       if (data.length > 0) {
@@ -86,6 +108,8 @@ class AppDB {
       for (const item of data) {
         if (isClients) {
           upsert.run(item.id, JSON.stringify(item));
+        } else if (isInvoices) {
+          upsert.run(item.id, item.direction || null, item.monthKey || null, item.dedupKey || null, JSON.stringify(item));
         } else {
           upsert.run(item.id, item.clientId || null, item.monthKey || null, JSON.stringify(item));
         }
@@ -125,6 +149,8 @@ class AppDB {
       if (data.clients)    this.saveCollection('clients', data.clients);
       if (data.activities) this.saveCollection('activities', data.activities);
       if (data.expenses)   this.saveCollection('expenses', data.expenses);
+      if (data.invoices)      this.saveCollection('invoices', data.invoices);
+      if (data.supplierRules) this._setKV('supplierRules', data.supplierRules);
       if (data.studio)     this._setKV('studio', data.studio);
       if (data.fiscal)     this._setKV('fiscal', data.fiscal);
       if (data.docCounters) {
@@ -140,6 +166,7 @@ class AppDB {
       clients:    this.db.prepare('SELECT COUNT(*) as n FROM clients').get().n,
       activities: this.db.prepare('SELECT COUNT(*) as n FROM activities').get().n,
       expenses:   this.db.prepare('SELECT COUNT(*) as n FROM expenses').get().n,
+      invoices:   this.db.prepare('SELECT COUNT(*) as n FROM invoices').get().n,
       sizeBytes:  fs.statSync(this.dbPath).size,
     };
   }
