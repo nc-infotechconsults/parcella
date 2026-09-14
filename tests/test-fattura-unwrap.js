@@ -122,3 +122,21 @@ test('rejects a p7m with no XML content', () => {
 test('rejects a malformed zip', () => {
   assert.throws(() => readZip(Buffer.from('not a zip at all', 'utf-8')), /ZIP non valido/);
 });
+
+test('a structurally valid zip with a corrupt local-header offset is rejected', () => {
+  // The dangerous case: EOCD and central directory both look right, so the
+  // reader gets far enough to dereference an offset that points nowhere.
+  const zip = buildZip([{ name: 'a.xml', data: Buffer.from('<?xml version="1.0"?><x/>', 'utf-8') }]);
+  const eocd = zip.length - 22;
+  const cdStart = zip.readUInt32LE(eocd + 16);
+  zip.writeUInt32LE(0xfffffff0, cdStart + 42);
+  assert.throws(() => readZip(zip), /ZIP non valido/);
+});
+
+test('a leading BOM is normalized away whatever the container', () => {
+  const xml = '﻿' + fixtures.read('passiva-td04-nota-credito.xml');
+  const plain = unwrap('a.xml', Buffer.from(xml, 'utf-8'))[0].xml;
+  const signed = unwrap('a.xml.p7m', buildP7M(xml))[0].xml;
+  assert.equal(plain.charCodeAt(0), 0x3c);   // '<', not U+FEFF
+  assert.equal(plain, signed);               // identical bytes => identical dedup hash
+});

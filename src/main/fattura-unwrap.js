@@ -60,9 +60,11 @@ function extractP7M(buffer) {
     }
   }
   const xml = findXmlInDER(buf);
-  // findXmlInDER already returns exactly the DER-delimited OCTET STRING
-  // payload starting at '<?xml' — no further trimming needed or wanted:
-  // trailing bytes there (e.g. a final newline) are genuine file content.
+  // findXmlInDER already returns exactly the DER-delimited OCTET STRING payload
+  // starting at '<?xml' — no further trimming. Cutting at the last '>' would
+  // drop a trailing newline that is genuine file content, and Task 6 hashes
+  // this string as a dedup guard: the same document arriving once as .xml and
+  // once as .xml.p7m must hash identically.
   if (xml) return xml;
   throw new Error('Contenuto XML non trovato nel file .p7m');
 }
@@ -94,9 +96,15 @@ function readZip(buffer) {
     const localOffset = buf.readUInt32LE(pos + 42);
     const name = buf.subarray(pos + 46, pos + 46 + nameLen).toString('utf-8');
 
+    // localOffset and compSize come from the archive itself: untrusted. Without
+    // these guards a corrupt offset reaches readUInt16LE as a raw RangeError and
+    // a corrupt size reaches zlib, so the caller sees a Node internal message
+    // instead of the archive error this module promises.
+    if (localOffset + 30 > buf.length) throw new Error('Archivio ZIP non valido');
     const localNameLen = buf.readUInt16LE(localOffset + 26);
     const localExtraLen = buf.readUInt16LE(localOffset + 28);
     const dataStart = localOffset + 30 + localNameLen + localExtraLen;
+    if (dataStart + compSize > buf.length) throw new Error('Archivio ZIP non valido');
     const raw = buf.subarray(dataStart, dataStart + compSize);
 
     if (!name.endsWith('/')) {
@@ -111,19 +119,24 @@ function readZip(buffer) {
 
 const isXmlName = n => /\.xml$/i.test(n);
 
+// Normalize here, at the one place every container converges: a BOM breaks the
+// XML parser, and leaving it on only the plain-.xml path would make the same
+// document hash two different ways depending on how it arrived.
+const stripBOM = s => (s.charCodeAt(0) === 0xFEFF ? s.slice(1) : s);
+
 function unwrap(fileName, buffer) {
   const lower = String(fileName).toLowerCase();
   if (lower.endsWith('.p7m')) {
-    return [{ name: fileName.replace(/\.p7m$/i, ''), xml: extractP7M(buffer) }];
+    return [{ name: fileName.replace(/\.p7m$/i, ''), xml: stripBOM(extractP7M(buffer)) }];
   }
   if (lower.endsWith('.zip')) {
     return readZip(buffer)
       .filter(e => isXmlName(e.name) || /\.xml\.p7m$/i.test(e.name))
       .map(e => (/\.p7m$/i.test(e.name)
-        ? { name: e.name.replace(/\.p7m$/i, ''), xml: extractP7M(e.data) }
-        : { name: e.name, xml: e.data.toString('utf-8') }));
+        ? { name: e.name.replace(/\.p7m$/i, ''), xml: stripBOM(extractP7M(e.data)) }
+        : { name: e.name, xml: stripBOM(e.data.toString('utf-8')) }));
   }
-  return [{ name: fileName, xml: Buffer.isBuffer(buffer) ? buffer.toString('utf-8') : String(buffer) }];
+  return [{ name: fileName, xml: stripBOM(Buffer.isBuffer(buffer) ? buffer.toString('utf-8') : String(buffer)) }];
 }
 
 module.exports = { unwrap, extractP7M, readZip };
