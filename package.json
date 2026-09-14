@@ -6,6 +6,7 @@
   "homepage": "https://parcella.app",
   "main": "src/main/main.js",
   "scripts": {
+    "test": "node --test tests/*.js",
     "start": "electron .",
     "rebuild": "electron-builder install-app-deps",
     "postinstall": "npm run rebuild",
