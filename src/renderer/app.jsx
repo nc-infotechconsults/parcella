@@ -8,6 +8,7 @@ async function dbLoadAll() {
     activities: AppStorage.load(AppStorage.KEYS.activities, null),
     expenses:   AppStorage.load(AppStorage.KEYS.expenses, null),
     invoices:   AppStorage.load(AppStorage.KEYS.invoices, null),
+    supplierRules: AppStorage.load('supplierRules', null),
     studio:     AppStorage.load(AppStorage.KEYS.studio, null),
     fiscal:     AppStorage.load(AppStorage.KEYS.fiscal, null),
     empty:      !AppStorage.load(AppStorage.KEYS.clients, null),
@@ -285,6 +286,7 @@ const App = () => {
     if (!confirm(t('data.resetDesc'))) return;
     const d = window.APP_DATA;
     setClients(d.clients); setActivities(d.activities); setExpenses(d.expenses);
+    setInvoices([]); setSupplierRules({});
     setStudio(d.user); setFiscal(d.fiscal);
     window.showToast('Dati ripristinati ai valori demo', 'info');
   };
