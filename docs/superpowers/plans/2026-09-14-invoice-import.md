@@ -2905,9 +2905,31 @@ In `src/renderer/i18n.js`, add to the `it` block (next to the other `nav.*` keys
       'inv.openOriginal': 'Apri XML originale',
       'inv.empty': 'Nessuna fattura importata',
       'inv.emptyHint': 'Importa le fatture elettroniche per avere ricavi, costi e IVA reali.',
+      'inv.kpiInvoiced': 'Ricavi fatturati',
+      'inv.kpiCosts': 'Costi da fatture',
+      'inv.vatDebit': 'IVA a debito',
+      'inv.vatCredit': 'IVA a credito',
+      'inv.ofWhichReverse': 'di cui reverse',
+      'inv.activeInvoices': 'fatture attive',
+      'inv.passiveInvoices': 'fatture passive',
+      'inv.balanceShort': 'saldo',
+      'inv.allQuarters': 'Tutti i trimestri',
+      'inv.period': 'Periodo',
+      'inv.balance': 'Saldo',
+      'inv.docType': 'TipoDocumento',
+      'inv.withholdingRow': 'Ritenuta',
+      'inv.cassaRow': 'Cassa',
+      'inv.line': 'Riga',
+      'inv.summaryRow': 'Riepilogo',
+      'inv.settlementDate': 'Data saldo',
+      'inv.notes': 'Note',
 ```
 
-English values: `Invoices`, `Active`, `Passive`, `VAT registers`, `Import invoices`, `Number`, `Date`, `Counterparty`, `Taxable`, `VAT`, `Total`, `Status`, `To collect`, `To pay`, `Collected`, `Paid`, `Mark as settled`, `Reverse charge`, `Credit note`, `Asset`, `To review`, `Invoice data (read-only)`, `Classification`, `Category`, `Deductible %`, `Deductible VAT %`, `Amortization years`, `Client`, `Timesheet month`, `Open original XML`, `No invoices imported`, `Import your e-invoices to work from real revenue, costs and VAT.`
+English values: `Invoices`, `Active`, `Passive`, `VAT registers`, `Import invoices`, `Number`, `Date`, `Counterparty`, `Taxable`, `VAT`, `Total`, `Status`, `To collect`, `To pay`, `Collected`, `Paid`, `Mark as settled`, `Reverse charge`, `Credit note`, `Asset`, `To review`, `Invoice data (read-only)`, `Classification`, `Category`, `Deductible %`, `Deductible VAT %`, `Amortization years`, `Client`, `Timesheet month`, `Open original XML`, `No invoices imported`, `Import your e-invoices to work from real revenue, costs and VAT.`, `Invoiced revenue`, `Costs from invoices`, `VAT payable`, `VAT deductible`, `of which reverse`, `active invoices`, `passive invoices`, `balance`, `All quarters`, `Period`, `Balance`, `Document type`, `Withholding`, `Pension fund`, `Line`, `Summary`, `Settlement date`, `Notes`
+
+Every one of these must exist under BOTH `it` and `en`: the app has a live
+language switcher, so a hardcoded Italian string leaves the screen half
+translated for an English user.
 
 - [ ] **Step 2: Add the Sidebar entry**
 
@@ -2933,7 +2955,12 @@ Add the state next to the other collections (after `const [expenses, setExpenses
   const [editingInvoice, setEditingInvoice] = useState(null);
 ```
 
-In `dbLoadAll()`'s localStorage fallback object add `invoices: AppStorage.load('ts_invoices', null),` and in `AppStorage.KEYS` (`src/renderer/storage.js`) add `invoices: 'ts_invoices',`.
+In `dbLoadAll()`'s localStorage fallback object add BOTH
+`invoices: AppStorage.load('ts_invoices', null),` and
+`supplierRules: AppStorage.load('supplierRules', null),` — `dbSave` writes
+`supplierRules` on that path, so without the matching read every remembered
+supplier rule is silently discarded on the next load. In `AppStorage.KEYS`
+(`src/renderer/storage.js`) add `invoices: 'ts_invoices',`.
 
 In the `init()` effect, after `setExpenses(...)`:
 
@@ -2942,7 +2969,12 @@ In the `init()` effect, after `setExpenses(...)`:
       setSupplierRules(data.supplierRules || {});
 ```
 
-In `seedDemo` and `startEmpty`, set `setInvoices([])` and save `await window.api.db.saveCollection('invoices', [])`.
+In `seedDemo` and `startEmpty`, set `setInvoices([])` and save
+`await window.api.db.saveCollection('invoices', [])`.
+
+Also add `setInvoices([]); setSupplierRules({});` to `handleResetData` — it
+restores the demo dataset, and leaving imported invoices behind would strand
+them against clients the reset has just replaced.
 
 Add the persistence effect next to the others:
 
@@ -3009,7 +3041,7 @@ Create `src/renderer/components/invoices.jsx`:
 // rendered read-only (P1). Only the classification block is editable.
 const InvoiceBadges = ({ inv }) => (
   <>
-    {inv.reverseCharge && <span className="badge badge-warning badge-dot" title="Reverse charge">{t('inv.reverseCharge')}</span>}
+    {inv.reverseCharge && <span className="badge badge-warning badge-dot" title={t('inv.reverseCharge')}>{t('inv.reverseCharge')}</span>}
     {inv.sign === -1 && <span className="badge badge-warning badge-dot">{t('inv.creditNote')}</span>}
     {inv.fiscal && inv.fiscal.amortize && <span className="badge badge-dot">{t('inv.asset')}</span>}
     {!inv.reviewedAt && <span className="badge badge-warning badge-dot">{t('inv.review')}</span>}
@@ -3040,24 +3072,24 @@ const Invoices = ({ invoices, clients, currentYear, onImport, onEdit, onDelete }
     <div className="content">
       <div className="kpi-grid" style={{ gridTemplateColumns: "repeat(4, 1fr)" }}>
         <div className="kpi">
-          <div className="kpi-label">Ricavi fatturati {yearFilter}</div>
+          <div className="kpi-label">{t('inv.kpiInvoiced')} {yearFilter}</div>
           <div className="kpi-value tabular">{fmtEUR(fy.consuntivo.ricavi)}</div>
-          <div className="kpi-meta"><span>{active.length} fatture attive</span></div>
+          <div className="kpi-meta"><span>{active.length} {t('inv.activeInvoices')}</span></div>
         </div>
         <div className="kpi">
-          <div className="kpi-label">Costi da fatture</div>
+          <div className="kpi-label">{t('inv.kpiCosts')}</div>
           <div className="kpi-value tabular">{fmtEUR(fy.consuntivo.costiCompetenza)}</div>
-          <div className="kpi-meta"><span>{passive.length} fatture passive</span></div>
+          <div className="kpi-meta"><span>{passive.length} {t('inv.passiveInvoices')}</span></div>
         </div>
         <div className="kpi">
-          <div className="kpi-label">IVA a debito</div>
+          <div className="kpi-label">{t('inv.vatDebit')}</div>
           <div className="kpi-value tabular">{fmtEUR(fy.consuntivo.ivaDebito)}</div>
-          <div className="kpi-meta"><span>di cui reverse {fmtEUR(fy.consuntivo.ivaReverse)}</span></div>
+          <div className="kpi-meta"><span>{t('inv.ofWhichReverse')} {fmtEUR(fy.consuntivo.ivaReverse)}</span></div>
         </div>
         <div className="kpi">
-          <div className="kpi-label">IVA a credito</div>
+          <div className="kpi-label">{t('inv.vatCredit')}</div>
           <div className="kpi-value tabular">{fmtEUR(fy.consuntivo.ivaCredito)}</div>
-          <div className="kpi-meta"><span>saldo {fmtEUR(fy.consuntivo.ivaSaldo)}</span></div>
+          <div className="kpi-meta"><span>{t('inv.balanceShort')} {fmtEUR(fy.consuntivo.ivaSaldo)}</span></div>
         </div>
       </div>
 
@@ -3078,7 +3110,7 @@ const Invoices = ({ invoices, clients, currentYear, onImport, onEdit, onDelete }
           {(years.length ? years : [String(currentYear)]).map(y => <option key={y} value={y}>{y}</option>)}
         </select>
         <select className="select" value={periodFilter} onChange={e => setPeriodFilter(e.target.value)}>
-          <option value="all">Tutti i trimestri</option>
+          <option value="all">{t('inv.allQuarters')}</option>
           {["Q1", "Q2", "Q3", "Q4"].map(q => <option key={q} value={q}>{q}</option>)}
         </select>
         <button className="btn btn-primary" onClick={onImport}>{t('inv.import')}</button>
@@ -3089,11 +3121,11 @@ const Invoices = ({ invoices, clients, currentYear, onImport, onEdit, onDelete }
           <table className="data">
             <thead>
               <tr>
-                <th>Periodo</th>
-                <th className="num">IVA a debito</th>
-                <th className="num">IVA a credito</th>
-                <th className="num">di cui reverse</th>
-                <th className="num">Saldo</th>
+                <th>{t('inv.period')}</th>
+                <th className="num">{t('inv.vatDebit')}</th>
+                <th className="num">{t('inv.vatCredit')}</th>
+                <th className="num">{t('inv.ofWhichReverse')}</th>
+                <th className="num">{t('inv.balance')}</th>
               </tr>
             </thead>
             <tbody>
@@ -3158,7 +3190,7 @@ const Invoices = ({ invoices, clients, currentYear, onImport, onEdit, onDelete }
             {list.length > 0 && (
               <tfoot>
                 <tr>
-                  <td colSpan={3}>Totale</td>
+                  <td colSpan={3}>{t('inv.total')}</td>
                   <td className="num mono">{fmtEUR(sum(list, i => i.totals.imponibile))}</td>
                   <td className="num mono">{fmtEUR(sum(list, i => i.totals.imposta))}</td>
                   <td className="num"><strong>{fmtEUR(sum(list, i => i.totals.documento))}</strong></td>
@@ -3203,22 +3235,26 @@ const InvoiceDrawer = ({ invoice, clients, onSave, onClose }) => {
         <button className="btn btn-primary" onClick={save}>{t('action.save')}</button>
       </>}>
 
-      <h3 className="section-title">{t('inv.fromXml')}</h3>
+      {/* P1 is a visual promise, not only a code one: the immutable block gets a
+          sunken background so it reads as a record, not a form. */}
+      <div style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)",
+                    borderRadius: "var(--radius)", padding: 12 }}>
+      <h3 className="section-title" style={{ marginTop: 0 }}>{t('inv.fromXml')}</h3>
       <table className="data">
         <tbody>
           <tr><td>{t('inv.date')}</td><td className="mono">{invoice.date}</td>
-              <td>TipoDocumento</td><td className="mono">{invoice.tipoDoc}</td></tr>
+              <td>{t('inv.docType')}</td><td className="mono">{invoice.tipoDoc}</td></tr>
           <tr><td>{t('inv.taxable')}</td><td className="num mono">{fmtEUR(invoice.totals.imponibile)}</td>
               <td>{t('inv.vat')}</td><td className="num mono">{fmtEUR(invoice.totals.imposta)}</td></tr>
           {invoice.withholding && (
-            <tr><td>Ritenuta {invoice.withholding.aliquota}%</td><td className="num mono">{fmtEUR(invoice.withholding.importo)}</td>
-                <td>Cassa</td><td className="num mono">{invoice.cassa ? fmtEUR(invoice.cassa.importo) : "—"}</td></tr>
+            <tr><td>{t('inv.withholdingRow')} {invoice.withholding.aliquota}%</td><td className="num mono">{fmtEUR(invoice.withholding.importo)}</td>
+                <td>{t('inv.cassaRow')}</td><td className="num mono">{invoice.cassa ? fmtEUR(invoice.cassa.importo) : "—"}</td></tr>
           )}
         </tbody>
       </table>
 
       <table className="data" style={{ marginTop: 12 }}>
-        <thead><tr><th>Riga</th><th className="num">IVA</th><th className="num">Imponibile</th><th className="num">Imposta</th></tr></thead>
+        <thead><tr><th>{t('inv.line')}</th><th className="num">{t('inv.vat')}</th><th className="num">{t('inv.taxable')}</th><th className="num">{t('inv.vat')}</th></tr></thead>
         <tbody>
           {invoice.lines.map(l => (
             <tr key={l.n}><td>{l.desc}</td><td className="num mono">{l.vatPct != null ? l.vatPct + "%" : l.natura}</td>
@@ -3226,11 +3262,12 @@ const InvoiceDrawer = ({ invoice, clients, onSave, onClose }) => {
           ))}
           {invoice.vatSummary.map((v, i) => (
             <tr key={"r" + i} style={{ color: "var(--text-muted)" }}>
-              <td>Riepilogo {v.natura || ""}</td><td className="num mono">{v.vatPct}%</td>
+              <td>{t('inv.summaryRow')} {v.natura || ""}</td><td className="num mono">{v.vatPct}%</td>
               <td className="num mono">{fmtEUR(v.imponibile)}</td><td className="num mono">{fmtEUR(v.imposta)}</td></tr>
           ))}
         </tbody>
       </table>
+      </div>
 
       <h3 className="section-title" style={{ marginTop: 20 }}>{t('inv.classification')}</h3>
       <div className="form-grid">
@@ -3298,13 +3335,13 @@ const InvoiceDrawer = ({ invoice, clients, onSave, onClose }) => {
           </select>
         </div>
         <div className="field">
-          <label>Data saldo</label>
+          <label>{t('inv.settlementDate')}</label>
           <input type="date" className="input mono" value={edit.settlement.date || ""}
             onChange={e => setEdit(x => ({ ...x, settlement: { ...x.settlement, date: e.target.value || null } }))} />
         </div>
 
         <div className="field full">
-          <label>Note</label>
+          <label>{t('inv.notes')}</label>
           <input className="input" value={edit.notes} onChange={e => setEdit(x => ({ ...x, notes: e.target.value }))} />
         </div>
       </div>
