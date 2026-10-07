@@ -57,17 +57,16 @@
   // ── Ammortamenti ───────────────────────────────────────────────────────────
   // art. 102 TUIR: the first year's quota is halved, which pushes a final
   // half-quota into year start+years.
-  function buildAmortSchedule(inv) {
-    const f = inv.fiscal || {};
-    const years = Math.max(1, Number(f.amortYears) || 4);
-    // Structural guard, not merely a caller convention: a credit note can never
-    // open a schedule. Both callers already filter on sign, but a future one
-    // might not, and the failure mode is a silently inflated deduction.
-    const base = (inv.sign || 1) < 0 ? 0
-      : round2(Math.abs(inv.totals.imponibile || 0) * pct(f.deductPct) / 100);
+  // One schedule builder for both sources of a bene strumentale. An invoice and
+  // a hand-entered expense describe the same asset in different shapes, and
+  // when each grew its own quota arithmetic the manual one silently lost every
+  // year after the purchase.
+  function amortSchedule(o) {
+    const years = Math.max(1, Number(o.years) || 4);
+    const base = round2(o.base || 0);
     const full = base / years;
-    const startYear = Number(String(inv.date || '').slice(0, 4));
-    const half = f.firstYearHalf !== false;
+    const startYear = Number(String(o.date || '').slice(0, 4));
+    const half = o.firstYearHalf !== false;
 
     const quotas = [];
     if (half) {
@@ -83,15 +82,48 @@
     if (drift !== 0) quotas[quotas.length - 1].amount = round2(quotas[quotas.length - 1].amount + drift);
 
     return {
-      id: inv.id,
-      desc: inv.causale || (inv.lines && inv.lines[0] && inv.lines[0].desc) || '',
-      date: inv.date,
+      id: o.id,
+      source: o.source || 'invoice',
+      desc: o.desc || '',
+      date: o.date,
       startYear,
       cost: base,
       years,
       firstYearHalf: half,
       quotas,
     };
+  }
+
+  function buildAmortSchedule(inv) {
+    const f = inv.fiscal || {};
+    return amortSchedule({
+      id: inv.id,
+      source: 'invoice',
+      desc: inv.causale || (inv.lines && inv.lines[0] && inv.lines[0].desc) || '',
+      date: inv.date,
+      years: Number(f.amortYears) || 4,
+      firstYearHalf: f.firstYearHalf !== false,
+      // Structural guard, not merely a caller convention: a credit note can
+      // never open a schedule. Both callers already filter on sign, but a
+      // future one might not, and the failure mode is a silently inflated
+      // deduction.
+      base: (inv.sign || 1) < 0 ? 0
+        : Math.abs(inv.totals.imponibile || 0) * pct(f.deductPct) / 100,
+    });
+  }
+
+  // A manual expense dates from a month, not a day, and carries its amount
+  // gross; everything else is the same asset as an invoiced one.
+  function buildExpenseAmortSchedule(e) {
+    return amortSchedule({
+      id: e.id,
+      source: 'expense',
+      desc: e.desc || e.category || '',
+      date: String(e.monthKey || '') + '-01',
+      years: Number(e.amortYears) || 4,
+      firstYearHalf: e.firstYearHalf !== false,
+      base: computeExpenseFiscals(e).net * pct(e.deductPct) / 100,
+    });
   }
 
   function amortQuotaFor(schedule, year) {
@@ -156,14 +188,21 @@
     const ivaCredito = round2(passive.reduce((s, i) => s + detractedOn(i), 0)
       + reverse.reduce((s, i) => s + detractedOn(i), 0) + ivaCreditoSpese);
 
-    // Costs — competenza vs cassa, with cespiti spread over their schedule
+    // Costs — competenza vs cassa, with cespiti spread over their schedule.
+    // Both lists are deliberately unfiltered by year: a bene strumentale bought
+    // in 2023 is still deducting its quota today, and reading only this year's
+    // documents is what made every quota after the purchase disappear.
     const costInvoices = invoices.filter(i => i.direction === 'passive');
-    const cespiti = costInvoices
-      .filter(i => i.fiscal && i.fiscal.amortize && (i.sign || 1) > 0)
-      .map(i => {
-        const s = buildAmortSchedule(i);
-        return { ...s, quotaYear: amortQuotaFor(s, year), residual: amortResidualAt(s, year) };
-      });
+    const amortizedExpenses = expenses.filter(e => !e.billable && e.amortize === true);
+    const withYear = s => ({
+      ...s, quotaYear: amortQuotaFor(s, year), residual: amortResidualAt(s, year),
+    });
+    const cespiti = [
+      ...costInvoices
+        .filter(i => i.fiscal && i.fiscal.amortize && (i.sign || 1) > 0)
+        .map(i => withYear(buildAmortSchedule(i))),
+      ...amortizedExpenses.map(e => withYear(buildExpenseAmortSchedule(e))),
+    ];
 
     const costiCompetenza = round2(
       byDocDate.filter(i => i.direction === 'passive')
@@ -174,10 +213,14 @@
     // cost that escapes the cash basis; everything else waits to be paid.
     const paidThisYear = costInvoices.filter(i =>
       settledInYear(i) && !(i.fiscal && i.fiscal.amortize && (i.sign || 1) > 0));
+    // An amortized expense deducts through its schedule above, so it must not
+    // also contribute its flat yearly quota here — that would count the year of
+    // purchase twice.
     const costiDeducibili = round2(
       paidThisYear.reduce((s, i) => s + invoiceCostFiscals(i).deductible, 0)
       + cespiti.reduce((s, c) => s + c.quotaYear, 0)
-      + manual.reduce((s, e) => s + computeExpenseFiscals(e).yearlyDeducted, 0)
+      + manual.filter(e => e.amortize !== true)
+        .reduce((s, e) => s + computeExpenseFiscals(e).yearlyDeducted, 0)
     );
 
     // Costs by category — invoices and manual expenses share the same buckets
@@ -266,7 +309,8 @@
   return {
     round2, CATEGORY_RULES, AMORTIZE_THRESHOLD,
     computeExpenseFiscals, invoiceCostFiscals,
-    buildAmortSchedule, amortQuotaFor, amortResidualAt,
+    amortSchedule, buildAmortSchedule, buildExpenseAmortSchedule,
+    amortQuotaFor, amortResidualAt,
     computeFiscalYear,
   };
 });

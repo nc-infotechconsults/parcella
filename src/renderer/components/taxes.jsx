@@ -343,9 +343,19 @@ const Taxes = ({ activities, expenses, fiscal, clients, studio, invoices, year: 
               {tax.fy.cespiti.length === 0 && (
                 <tr><td colSpan={6}><div className="empty-state"><div className="title">{t('tax.noAssets')}</div></div></td></tr>
               )}
-              {tax.fy.cespiti.map(c => (
-                <tr key={c.id}>
-                  <td>{c.desc}</td>
+              {/* Oldest first: the list spans every year still deducting, not
+                  just this year's purchases. An exhausted schedule is dimmed
+                  rather than hidden — the asset is still on the books. */}
+              {tax.fy.cespiti.slice()
+                .sort((a, b) => String(a.date).localeCompare(String(b.date)))
+                .map(c => (
+                <tr key={c.source + ":" + c.id} style={c.quotaYear === 0 ? { color: "var(--text-muted)" } : null}>
+                  <td>
+                    {c.desc}
+                    {c.startYear < parseInt(fiscalYear) && (
+                      <span className="badge" style={{ marginLeft: 6 }}>{c.startYear}</span>
+                    )}
+                  </td>
                   <td className="mono">{c.date}</td>
                   <td className="num mono">{fmtEUR(c.cost)}</td>
                   <td className="num mono">{c.years}{c.firstYearHalf ? "½" : ""}</td>
