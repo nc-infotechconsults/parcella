@@ -2,7 +2,62 @@
 // Supporta: libero professionista, ditta individuale.
 // studio.tipoSoggetto: "professionista" | "ditta_individuale" | "societa"
 
+// Contributi + IRPEF for one fiscal year, from that year's merged figures.
+// Pure: no reference to the year on screen, so the same code sizes this year's
+// liability and last year's, which is what the acconti are based on.
+function taxLiability(fy, fiscal, tipo) {
+  const r2 = n => Math.round((Number(n) || 0) * 100) / 100;
+  const compensi = fy.consuntivo.ricaviIncassati;
+  const costiDeducibili = fy.consuntivo.costiDeducibili;
+  const ritenuta = fy.consuntivo.ritenutaIncassata;
+
+  const reddNettoLordoCassa = Math.max(0, compensi - costiDeducibili);
+  let contribCassa = 0;
+  let contribFisso = 0;    // minimale INPS ditta
+  let contribVar = 0;      // variabile su eccedente (ditta)
+  let irapBase = 0;
+  let irap = 0;
+
+  if (tipo === "professionista") {
+    contribCassa = Math.max(0, reddNettoLordoCassa * (fiscal.cassaContribPct || 14.5) / 100);
+  } else if (tipo === "ditta_individuale") {
+    // INPS artigiani/commercianti: fisso (minimale) + variabile su eccedente
+    const minimale = fiscal.inpsMinimale || 4427;
+    const pctVar = fiscal.inpsPctVariabile || 24.0;
+    const reddBase = 18415; // reddito minimale INPS 2025 (fissato INPS)
+    contribFisso = minimale;
+    contribVar = Math.max(0, (reddNettoLordoCassa - reddBase) * pctVar / 100);
+    contribCassa = contribFisso + contribVar;
+    // IRAP solo se autonoma organizzazione (lasciamo all'utente configurare)
+    irapBase = Math.max(0, reddNettoLordoCassa - 8000); // deduzione base €8k
+    irap = irapBase * (fiscal.irapPct || 3.9) / 100;
+  }
+
+  const redditoImpIrpef = Math.max(0, reddNettoLordoCassa - contribCassa);
+  let irpefLorda = 0, prevBracket = 0;
+  for (const b of (fiscal.irpefBrackets || [{ upTo: 28000, rate: 23 }, { upTo: 50000, rate: 35 }, { upTo: Infinity, rate: 43 }])) {
+    const inBracket = Math.max(0, Math.min(redditoImpIrpef, b.upTo) - prevBracket);
+    irpefLorda += inBracket * b.rate / 100;
+    prevBracket = b.upTo;
+    if (redditoImpIrpef <= b.upTo) break;
+  }
+  const addReg = redditoImpIrpef * (fiscal.addRegPct || 0) / 100;
+  const addCom = redditoImpIrpef * (fiscal.addComPct || 0) / 100;
+  const irpefLordaTot = irpefLorda + addReg + addCom;
+
+  return {
+    compensi, costiDeducibili, ritenuta,
+    reddNettoLordoCassa,
+    contribCassa: r2(contribCassa), contribFisso, contribVar, irapBase, irap,
+    redditoImpIrpef, irpefLorda, addReg, addCom, irpefLordaTot,
+    irpefNetta: r2(Math.max(0, irpefLordaTot - ritenuta)),
+    ritenutaCredito: Math.max(0, ritenuta - irpefLordaTot),
+  };
+}
+window.taxLiability = taxLiability;
+
 function computeTaxes(activities, expenses, fiscal, year, clients, studio, invoices) {
+  const round2 = n => Math.round((Number(n) || 0) * 100) / 100;
   const _clients = clients || window.APP_DATA.clients;
   const tipo = (studio && studio.tipoSoggetto) || "professionista";
   const yr = String(year);
@@ -60,43 +115,51 @@ function computeTaxes(activities, expenses, fiscal, year, clients, studio, invoi
   // ── Costi deducibili ──────────────────────────────────────────────────────
   const costiDeducibili = fy.consuntivo.costiDeducibili;
 
-  // ── Contributi previdenziali ──────────────────────────────────────────────
-  const reddNettoLordoCassa = Math.max(0, compensi - costiDeducibili);
-  let contribCassa = 0;
-  let contribFisso = 0;    // minimale INPS ditta
-  let contribVar = 0;      // variabile su eccedente (ditta)
-  let irapBase = 0;
-  let irap = 0;
+  // ── Contributi e IRPEF ────────────────────────────────────────────────────
+  // The whole chain lives in taxLiability() because the acconti are sized on
+  // LAST year's liability, so it has to be computable for a year other than
+  // the one on screen.
+  const cur = taxLiability(fy, fiscal, tipo);
+  const {
+    reddNettoLordoCassa, contribCassa, contribFisso, contribVar, irapBase, irap,
+    redditoImpIrpef, irpefLorda, addReg, addCom, irpefLordaTot, irpefNetta,
+    ritenutaCredito,
+  } = cur;
 
-  if (tipo === "professionista") {
-    contribCassa = Math.max(0, reddNettoLordoCassa * (fiscal.cassaContribPct || 14.5) / 100);
-  } else if (tipo === "ditta_individuale") {
-    // INPS artigiani/commercianti: fisso (minimale) + variabile su eccedente
-    const minimale = fiscal.inpsMinimale || 4427;
-    const pctVar = fiscal.inpsPctVariabile || 24.0;
-    const reddBase = 18415; // reddito minimale INPS 2025 (fissato INPS)
-    contribFisso = minimale;
-    contribVar = Math.max(0, (reddNettoLordoCassa - reddBase) * pctVar / 100);
-    contribCassa = contribFisso + contribVar;
-    // IRAP solo se autonoma organizzazione (lasciamo all'utente configurare)
-    irapBase = Math.max(0, reddNettoLordoCassa - 8000); // deduzione base €8k
-    irap = irapBase * (fiscal.irapPct || 3.9) / 100;
-  }
+  // ── Acconti: metodo storico ───────────────────────────────────────────────
+  // In June you pay an instalment sized on LAST year's liability, and the
+  // difference against how this year really went is settled the June after.
+  // Where last year's documents are in the archive the base is computed from
+  // them; the stored figure is only the fallback for a first year of use.
+  const prevYr = Number(yr) - 1;
+  const hasPrevData =
+    (invoices || []).some(i => String(i.date || "").startsWith(prevYr + "-"))
+    || expenses.some(e => String(e.monthKey || "").startsWith(prevYr + "-"));
+  const fyPrev = hasPrevData ? window.computeFiscalYear({
+    year: prevYr, invoices: invoices || [], activities, expenses, clients: _clients, fiscal,
+    computeInvoiceAmounts: window.computeInvoiceAmounts,
+  }) : null;
+  const prev = fyPrev
+    ? { ...taxLiability(fyPrev, fiscal, tipo), derived: true }
+    : {
+      contribCassa: Number(fiscal.cassaPrevYear) || 0,
+      irpefNetta: Number(fiscal.irpefPrevYear) || 0,
+      derived: false,
+    };
 
-  // ── IRPEF ─────────────────────────────────────────────────────────────────
-  const redditoImpIrpef = Math.max(0, reddNettoLordoCassa - contribCassa);
-  let irpefLorda = 0, prevBracket = 0;
-  for (const b of (fiscal.irpefBrackets || [{ upTo: 28000, rate: 23 }, { upTo: 50000, rate: 35 }, { upTo: Infinity, rate: 43 }])) {
-    const inBracket = Math.max(0, Math.min(redditoImpIrpef, b.upTo) - prevBracket);
-    irpefLorda += inBracket * b.rate / 100;
-    prevBracket = b.upTo;
-    if (redditoImpIrpef <= b.upTo) break;
-  }
-  const addReg = redditoImpIrpef * (fiscal.addRegPct || 0) / 100;
-  const addCom = redditoImpIrpef * (fiscal.addComPct || 0) / 100;
-  const irpefLordaTot = irpefLorda + addReg + addCom;
-  const irpefNetta = Math.max(0, irpefLordaTot - ritenutaTrattenuta);
-  const ritenutaCredito = Math.max(0, ritenutaTrattenuta - irpefLordaTot);
+  // La Gestione Separata INPS chiede l'80% del contributo dell'anno prima, in
+  // due rate uguali; le casse private in genere il 100% in due metà. L'IRPEF
+  // segue sempre il 100% ripartito 40/60.
+  const cassaLabel = (studio && studio.cassaName) === "Gestione Separata INPS" ? "INPS" : "cassa";
+  const cassaAccontoPct = fiscal.cassaAccontoPct != null
+    ? Number(fiscal.cassaAccontoPct)
+    : ((studio && studio.cassaName) === "Gestione Separata INPS" ? 80 : 100);
+  const accontiCassa = round2(prev.contribCassa * cassaAccontoPct / 100);
+  const accontiIrpef = round2(prev.irpefNetta);
+  // Il delta: quanto l'andamento reale di quest'anno si discosta dagli acconti
+  // già impostati sull'anno scorso. Negativo = credito, non una scadenza.
+  const saldoCassa = round2(contribCassa - accontiCassa);
+  const saldoIrpef = round2(irpefNetta - accontiIrpef);
 
   // ── IVA trimestrale ───────────────────────────────────────────────────────
   // Scadenze: professionista trimestrale con +1%; ditta può essere mensile
@@ -141,21 +204,34 @@ function computeTaxes(activities, expenses, fiscal, year, clients, studio, invoi
   if (ivaQ3 > 0) generatedF24.push({ id: "_q3", date: `${y}-11-16`, code: "6031", desc: `IVA 3° trim ${yr}`, amount: Math.round((ivaQ3 * 1.01) * 100) / 100, _generated: true });
   if (ivaQ4 > 0) generatedF24.push({ id: "_q4", date: `${y+1}-03-16`, code: "6031", desc: `IVA 4° trim ${yr}`, amount: Math.round((ivaQ4 * 1.01) * 100) / 100, _generated: true });
 
+  // A flag the user ticked on this screen is a fact about a deadline, so it has
+  // to reach the row; otherwise an instalment already paid kept being listed as
+  // still due. A recorded F24 entry still overrides both (merge below).
+  const statusOf = flag => (flag ? "paid" : undefined);
+  const basedOn = prev.derived ? `su ${prevYr} effettivo` : `su ${prevYr}`;
+
+  // Acconti e saldo IRPEF — identici per professionista e ditta individuale.
+  // Gli acconti si misurano sull'anno scorso (metodo storico): usare l'imposta
+  // di quest'anno dava una rata di giugno che nessuno deve e che contraddiceva
+  // il riquadro accanto, che l'anno scorso lo leggeva già.
+  if (tipo === "professionista" || tipo === "ditta_individuale") {
+    generatedF24.push({ id: "_irpef_acc1", date: `${y}-06-30`, code: "4033", desc: `1° acconto IRPEF ${yr} (40% ${basedOn})`, amount: round2(accontiIrpef * 0.4), status: statusOf(fiscal.irpefAcconto1Paid), _generated: true });
+    generatedF24.push({ id: "_irpef_acc2", date: `${y}-11-30`, code: "4034", desc: `2° acconto IRPEF ${yr} (60% ${basedOn})`, amount: round2(accontiIrpef * 0.6), status: statusOf(fiscal.irpefAcconto2Paid), _generated: true });
+    // Il saldo chiude il delta fra gli acconti versati e l'imposta vera
+    // dell'anno, che le fatture importate rendono calcolabile.
+    if (saldoIrpef > 0) {
+      generatedF24.push({ id: "_irpef_saldo", date: `${y + 1}-06-30`, code: "4001", desc: `Saldo IRPEF ${yr}`, amount: saldoIrpef, _generated: true });
+    }
+  }
+
   if (tipo === "professionista") {
-    // No generated row for the previous year's balance: it is last year's
-    // declaration minus the instalments actually paid then, which this screen
-    // does not know. It belongs in the recorded history, where the user enters
-    // what the commercialista computed. The old formula here was
-    // prev - 0.4*prev - 0.6*prev, which is identically zero.
-    generatedF24.push({ id: "_irpef_acc1", date: `${y}-06-30`, code: "4033", desc: `1° acconto IRPEF ${yr} (40%)`, amount: Math.round(irpefNetta * 0.4 * 100) / 100, _generated: true });
-    generatedF24.push({ id: "_irpef_acc2", date: `${y}-11-30`, code: "4034", desc: `2° acconto IRPEF ${yr} (60%)`, amount: Math.round(irpefNetta * 0.6 * 100) / 100, _generated: true });
-    // Cassa professionale acconti (stesso calendario IRPEF per Inarcassa)
-    generatedF24.push({ id: "_cassa_acc1", date: `${y}-06-30`, code: "3801", desc: `1° acconto cassa ${yr} (50%)`, amount: Math.round(contribCassa * 0.5 * 100) / 100, _generated: true });
-    generatedF24.push({ id: "_cassa_acc2", date: `${y}-11-30`, code: "3801", desc: `2° acconto cassa ${yr} (50%)`, amount: Math.round(contribCassa * 0.5 * 100) / 100, _generated: true });
+    const rataCassa = round2(accontiCassa / 2);
+    generatedF24.push({ id: "_cassa_acc1", date: `${y}-06-30`, code: "3801", desc: `1° acconto ${cassaLabel} ${yr} (${cassaAccontoPct}% ${basedOn}, 1ª rata)`, amount: rataCassa, status: statusOf(fiscal.cassaAcconto1Paid), _generated: true });
+    generatedF24.push({ id: "_cassa_acc2", date: `${y}-11-30`, code: "3801", desc: `2° acconto ${cassaLabel} ${yr} (${cassaAccontoPct}% ${basedOn}, 2ª rata)`, amount: rataCassa, status: statusOf(fiscal.cassaAcconto2Paid), _generated: true });
+    if (saldoCassa > 0) {
+      generatedF24.push({ id: "_cassa_saldo", date: `${y + 1}-06-30`, code: "3801", desc: `Saldo ${cassaLabel} ${yr}`, amount: saldoCassa, _generated: true });
+    }
   } else if (tipo === "ditta_individuale") {
-    // IRPEF: saldo giugno, acconti giugno+novembre
-    generatedF24.push({ id: "_irpef_acc1", date: `${y}-06-30`, code: "4033", desc: `1° acconto IRPEF ${yr} (40%)`, amount: Math.round(irpefNetta * 0.4 * 100) / 100, _generated: true });
-    generatedF24.push({ id: "_irpef_acc2", date: `${y}-11-30`, code: "4034", desc: `2° acconto IRPEF ${yr} (60%)`, amount: Math.round(irpefNetta * 0.6 * 100) / 100, _generated: true });
     // INPS artigiani/commercianti: 4 rate fisse (min.) + 2 saldi variabili
     const rataFissa = Math.round(contribFisso / 4 * 100) / 100;
     generatedF24.push({ id: "_inps_f1", date: `${y}-05-16`, code: "0601", desc: `INPS 1ª rata fissa ${yr}`, amount: rataFissa, _generated: true });
@@ -232,6 +308,15 @@ function computeTaxes(activities, expenses, fiscal, year, clients, studio, invoi
     daIncassare,
     f24All,        // scadenze generate + manuali
     totaleAnno,
+    // Acconti e delta (metodo storico)
+    prevYear: prev,
+    prevYr,
+    cassaAccontoPct,
+    cassaLabel,
+    accontiCassa,
+    accontiIrpef,
+    saldoCassa,
+    saldoIrpef,
   };
 }
 window.computeTaxes = computeTaxes;
@@ -315,7 +400,7 @@ const Taxes = ({ activities, expenses, fiscal, clients, studio, invoices, year: 
         <TaxIVA tax={tax} fiscal={fiscal} fiscalYear={fiscalYear} />
       )}
       {tab === "irpef" && (
-        <TaxIRPEF tax={tax} fiscal={fiscal} />
+        <TaxIRPEF tax={tax} fiscal={fiscal} onUpdateFiscal={onUpdateFiscal} />
       )}
       {tab === "cassa" && (
         <TaxCassa tax={tax} fiscal={fiscal} studio={studio} onUpdateFiscal={onUpdateFiscal} />
@@ -560,7 +645,42 @@ const TaxIVA = ({ tax, fiscal, fiscalYear }) => (
 );
 
 // ===== IRPEF =====
-const TaxIRPEF = ({ tax, fiscal }) => (
+// Gli acconti sono tarati sull'anno scorso; questa riga dice di quanto
+// l'andamento reale di quest'anno se ne discosta — cioè cosa resterà da
+// versare a saldo, o quanto è stato versato in più.
+// Senza i documenti dell'anno prima la base è una stima: va messa a mano,
+// altrimenti gli acconti restano fermi sul valore con cui il profilo è nato.
+const PrevYearBase = ({ value, year, onChange }) => (
+  <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6, fontSize: 12 }}>
+    <span style={{ color: "var(--text-secondary)" }}>Base {year} €</span>
+    <input
+      className="input mono" type="number" step="0.01" min="0"
+      style={{ width: 120, height: 26, fontSize: 12 }}
+      value={value || 0}
+      onChange={e => onChange(Math.max(0, Number(e.target.value) || 0))} />
+  </div>
+);
+
+const AccontoDelta = ({ dovuto, acconti, delta }) => (
+  <div style={{ marginTop: 10, paddingTop: 8, borderTop: "1px dashed var(--border)", fontSize: 12 }}>
+    <div style={{ display: "flex", justifyContent: "space-between", color: "var(--text-secondary)" }}>
+      <span>Dovuto sull'andamento reale di quest'anno</span>
+      <span className="mono">{fmtEUR(dovuto)}</span>
+    </div>
+    <div style={{ display: "flex", justifyContent: "space-between", color: "var(--text-secondary)" }}>
+      <span>− acconti impostati sull'anno scorso</span>
+      <span className="mono">{fmtEUR(acconti)}</span>
+    </div>
+    <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 700, marginTop: 4 }}>
+      <span>{delta >= 0 ? "= saldo a giugno prossimo" : "= credito da compensare"}</span>
+      <span className="mono" style={{ color: delta >= 0 ? "var(--warning)" : "var(--success)" }}>
+        {fmtEUR(Math.abs(delta))}
+      </span>
+    </div>
+  </div>
+);
+
+const TaxIRPEF = ({ tax, fiscal, onUpdateFiscal }) => (
   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
     <div className="card">
       <div className="card-header"><h3>Calcolo IRPEF a scaglioni</h3></div>
@@ -620,15 +740,25 @@ const TaxIRPEF = ({ tax, fiscal }) => (
           </div>
 
           <div style={{ padding: 14, border: "1px solid var(--border)", borderRadius: 4 }}>
-            <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>Acconti IRPEF (su anno precedente)</div>
+            <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>
+              Acconti IRPEF — metodo storico su {tax.prevYr}
+              {tax.prevYear.derived
+                ? <span className="badge badge-success" style={{ marginLeft: 6 }}>da fatture {tax.prevYr}</span>
+                : <span className="badge" style={{ marginLeft: 6 }}>stima inserita a mano</span>}
+            </div>
             <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, marginBottom: 6 }}>
-              <span>1° acconto (40%) · entro 30 giu · {fmtEUR(fiscal.irpefPrevYear * 0.4)}</span>
+              <span>1° acconto (40%) · entro 30 giu · {fmtEUR(tax.accontiIrpef * 0.4)}</span>
               <span>{fiscal.irpefAcconto1Paid ? <span className="badge badge-success badge-dot">versato</span> : <span className="badge badge-warning">da pagare</span>}</span>
             </div>
             <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5 }}>
-              <span>2° acconto (60%) · entro 30 nov · {fmtEUR(fiscal.irpefPrevYear * 0.6)}</span>
+              <span>2° acconto (60%) · entro 30 nov · {fmtEUR(tax.accontiIrpef * 0.6)}</span>
               <span>{fiscal.irpefAcconto2Paid ? <span className="badge badge-success badge-dot">versato</span> : <span className="badge badge-warning">da pagare</span>}</span>
             </div>
+            {!tax.prevYear.derived && (
+              <PrevYearBase value={fiscal.irpefPrevYear} year={tax.prevYr}
+                onChange={v => onUpdateFiscal && onUpdateFiscal({ ...fiscal, irpefPrevYear: v })} />
+            )}
+            <AccontoDelta dovuto={tax.irpefNetta} acconti={tax.accontiIrpef} delta={tax.saldoIrpef} />
           </div>
 
           <div style={{ padding: 14, background: "oklch(0.97 0.04 145)", border: "1px solid oklch(0.85 0.10 145)", borderRadius: 4, fontSize: 12.5 }}>
@@ -734,21 +864,31 @@ const TaxCassa = ({ tax, fiscal, studio, onUpdateFiscal }) => {
           </div>
           {/* Acconti — toggleable */}
           <div style={{ padding: 12, border: "1px solid var(--border)", borderRadius: 4 }}>
-            <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>Acconti cassa (su anno precedente)</div>
+            <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>
+              Acconti {tax.cassaLabel} — {tax.cassaAccontoPct}% del {tax.prevYr} ({fmtEUR(tax.prevYear.contribCassa)})
+              {tax.prevYear.derived
+                ? <span className="badge badge-success" style={{ marginLeft: 6 }}>da fatture {tax.prevYr}</span>
+                : <span className="badge" style={{ marginLeft: 6 }}>stima inserita a mano</span>}
+            </div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12.5, marginBottom: 6 }}>
-              <span>1° acconto (50%) · 30 giu · {fmtEUR(fiscal.cassaPrevYear * 0.5)}</span>
+              <span>1ª rata · 30 giu · {fmtEUR(tax.accontiCassa / 2)}</span>
               <button className={"btn btn-sm " + (fiscal.cassaAcconto1Paid ? "btn-primary" : "")}
                 onClick={() => updateFiscal({ cassaAcconto1Paid: !fiscal.cassaAcconto1Paid })}>
                 {fiscal.cassaAcconto1Paid ? "✓ Versato" : "Da versare"}
               </button>
             </div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12.5 }}>
-              <span>2° acconto (50%) · 30 nov · {fmtEUR(fiscal.cassaPrevYear * 0.5)}</span>
+              <span>2ª rata · 30 nov · {fmtEUR(tax.accontiCassa / 2)}</span>
               <button className={"btn btn-sm " + (fiscal.cassaAcconto2Paid ? "btn-primary" : "")}
                 onClick={() => updateFiscal({ cassaAcconto2Paid: !fiscal.cassaAcconto2Paid })}>
                 {fiscal.cassaAcconto2Paid ? "✓ Versato" : "Da versare"}
               </button>
             </div>
+            {!tax.prevYear.derived && (
+              <PrevYearBase value={fiscal.cassaPrevYear} year={tax.prevYr}
+                onChange={v => updateFiscal({ cassaPrevYear: v })} />
+            )}
+            <AccontoDelta dovuto={tax.contribCassa} acconti={tax.accontiCassa} delta={tax.saldoCassa} />
           </div>
         </div>
       </div>
