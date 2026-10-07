@@ -216,12 +216,16 @@
     // An amortized expense deducts through its schedule above, so it must not
     // also contribute its flat yearly quota here — that would count the year of
     // purchase twice.
-    const costiDeducibili = round2(
+    // The two halves are published separately because they answer different
+    // questions: what this year's activity cost, and what earlier purchases
+    // still deduct. Their sum is the deduction.
+    const quoteAmmortamento = round2(cespiti.reduce((s, c) => s + c.quotaYear, 0));
+    const costiEsercizio = round2(
       paidThisYear.reduce((s, i) => s + invoiceCostFiscals(i).deductible, 0)
-      + cespiti.reduce((s, c) => s + c.quotaYear, 0)
       + manual.filter(e => e.amortize !== true)
         .reduce((s, e) => s + computeExpenseFiscals(e).yearlyDeducted, 0)
     );
+    const costiDeducibili = round2(costiEsercizio + quoteAmmortamento);
 
     // Costs by category — invoices and manual expenses share the same buckets
     const costiPerCategoria = {};
@@ -295,7 +299,7 @@
       year,
       consuntivo: {
         ricavi, ricaviIncassati, ritenutaSubita, ritenutaIncassata, cassaRivalsa,
-        costiCompetenza, costiDeducibili,
+        costiCompetenza, costiDeducibili, costiEsercizio, quoteAmmortamento,
         ivaDebito, ivaCredito, ivaReverse, ivaSaldo: round2(ivaDebito - ivaCredito),
       },
       previsionale: {

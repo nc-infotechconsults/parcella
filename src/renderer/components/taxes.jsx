@@ -5,14 +5,20 @@
 // Contributi + IRPEF for one fiscal year, from that year's merged figures.
 // Pure: no reference to the year on screen, so the same code sizes this year's
 // liability and last year's, which is what the acconti are based on.
-function taxLiability(fy, fiscal, tipo) {
+// `contributiVersati` è il contributo previdenziale EFFETTIVAMENTE pagato
+// nell'anno: si deduce per cassa (art. 10 TUIR), non per competenza. Il
+// chiamante lo ricava dai versamenti, non da un'aliquota.
+function taxLiability(fy, fiscal, tipo, contributiVersati) {
   const r2 = n => Math.round((Number(n) || 0) * 100) / 100;
   // Un campo svuotato in Impostazioni torna al default; uno messo a zero resta
   // zero, perché "nessuna addizionale comunale" è una risposta legittima.
   const num = (v, def) => (v == null || v === "" || isNaN(Number(v)) ? def : Number(v));
   const compensi = fy.consuntivo.ricaviIncassati;
   const costiDeducibili = fy.consuntivo.costiDeducibili;
+  const costiEsercizio = fy.consuntivo.costiEsercizio;
+  const quoteAmmortamento = fy.consuntivo.quoteAmmortamento;
   const ritenuta = fy.consuntivo.ritenutaIncassata;
+  const contribDedotti = Math.max(0, num(contributiVersati, 0));
 
   // Le aliquote effettive si risolvono UNA volta qui e vengono restituite: la
   // schermata le mostra da qui invece di rileggere fiscal.* e riapplicare un
@@ -47,7 +53,11 @@ function taxLiability(fy, fiscal, tipo) {
     irap = irapBase * aliquote.irapPct / 100;
   }
 
-  const redditoImpIrpef = Math.max(0, reddNettoLordoCassa - contribCassa);
+  // Compensi incassati − costi di esercizio dell'anno − quote di ammortamento
+  // (anche di acquisti di anni precedenti) − contributi versati nell'anno.
+  // Prima si sottraeva il contributo MATURATO su quest'anno, che non è ancora
+  // stato versato e quindi non è ancora deducibile.
+  const redditoImpIrpef = Math.max(0, reddNettoLordoCassa - contribDedotti);
   // L'ultimo scaglione non ha tetto, e il profilo lo registra come upTo: null.
   // Math.min(reddito, null) vale 0, quindi l'aliquota massima si applicava a
   // niente e tutto il reddito oltre il penultimo scaglione era tassato a zero.
@@ -68,7 +78,8 @@ function taxLiability(fy, fiscal, tipo) {
 
   return {
     aliquote, brackets,
-    compensi, costiDeducibili, ritenuta,
+    compensi, costiDeducibili, costiEsercizio, quoteAmmortamento, ritenuta,
+    contributiVersati: contribDedotti,
     reddNettoLordoCassa,
     contribCassa: r2(contribCassa), contribFisso, contribVar, irapBase, irap,
     redditoImpIrpef, irpefLorda, addReg, addCom, irpefLordaTot,
@@ -137,16 +148,18 @@ function computeTaxes(activities, expenses, fiscal, year, clients, studio, invoi
   // ── Costi deducibili ──────────────────────────────────────────────────────
   const costiDeducibili = fy.consuntivo.costiDeducibili;
 
-  // ── Contributi e IRPEF ────────────────────────────────────────────────────
-  // The whole chain lives in taxLiability() because the acconti are sized on
-  // LAST year's liability, so it has to be computable for a year other than
-  // the one on screen.
-  const cur = taxLiability(fy, fiscal, tipo);
-  const {
-    reddNettoLordoCassa, contribCassa, contribFisso, contribVar, irapBase, irap,
-    redditoImpIrpef, irpefLorda, addReg, addCom, irpefLordaTot, irpefNetta,
-    ritenutaCredito,
-  } = cur;
+  // ── Contributi versati (deduzione per cassa) ──────────────────────────────
+  // Il contributo previdenziale si deduce nell'anno in cui lo VERSI, quindi la
+  // deduzione si legge dai versamenti, non da un'aliquota: è la somma dei
+  // tributi contributivi pagati con data in quell'anno.
+  const CONTRIB_CODES = new Set(["3801", "0601"]);
+  const recorded = fiscal.f24History || [];
+  const key = f => f.date + "|" + f.code;
+  const contributiPagatiIn = (anno) => round2(recorded
+    .filter(f => f.status === "paid"
+      && CONTRIB_CODES.has(String(f.code))
+      && String(f.date || "").startsWith(anno + "-"))
+    .reduce((s, f) => s + (Number(f.amount) || 0), 0));
 
   // ── Acconti: metodo storico ───────────────────────────────────────────────
   // In June you pay an instalment sized on LAST year's liability, and the
@@ -162,7 +175,7 @@ function computeTaxes(activities, expenses, fiscal, year, clients, studio, invoi
     computeInvoiceAmounts: window.computeInvoiceAmounts,
   }) : null;
   const prev = fyPrev
-    ? { ...taxLiability(fyPrev, fiscal, tipo), derived: true }
+    ? { ...taxLiability(fyPrev, fiscal, tipo, contributiPagatiIn(prevYr)), derived: true }
     : {
       contribCassa: Number(fiscal.cassaPrevYear) || 0,
       irpefNetta: Number(fiscal.irpefPrevYear) || 0,
@@ -178,6 +191,27 @@ function computeTaxes(activities, expenses, fiscal, year, clients, studio, invoi
     : ((studio && studio.cassaName) === "Gestione Separata INPS" ? 80 : 100);
   const accontiCassa = round2(prev.contribCassa * cassaAccontoPct / 100);
   const accontiIrpef = round2(prev.irpefNetta);
+
+  // Una rata spuntata "Versato" su questa schermata è un versamento anche se
+  // l'utente non ha registrato la riga F24 a mano: senza questo, spuntarla non
+  // cambiava nulla nella deduzione.
+  const rataCassa = round2(accontiCassa / 2);
+  const flagged = [
+    { date: `${Number(yr)}-06-30`, paid: fiscal.cassaAcconto1Paid },
+    { date: `${Number(yr)}-11-30`, paid: fiscal.cassaAcconto2Paid },
+  ].filter(d => d.paid && !recorded.some(f => key(f) === d.date + "|3801"));
+  const contributiVersati = round2(contributiPagatiIn(yr) + flagged.length * rataCassa);
+
+  // ── Contributi e IRPEF ────────────────────────────────────────────────────
+  // taxLiability() vale per qualunque anno, perché gli acconti si misurano su
+  // quello precedente e va quindi calcolato anche per quello.
+  const cur = taxLiability(fy, fiscal, tipo, contributiVersati);
+  const {
+    reddNettoLordoCassa, contribCassa, contribFisso, contribVar, irapBase, irap,
+    redditoImpIrpef, irpefLorda, addReg, addCom, irpefLordaTot, irpefNetta,
+    ritenutaCredito, costiEsercizio, quoteAmmortamento,
+  } = cur;
+
   // Il delta: quanto l'andamento reale di quest'anno si discosta dagli acconti
   // già impostati sull'anno scorso. Negativo = credito, non una scadenza.
   const saldoCassa = round2(contribCassa - accontiCassa);
@@ -247,7 +281,6 @@ function computeTaxes(activities, expenses, fiscal, year, clients, studio, invoi
   }
 
   if (tipo === "professionista") {
-    const rataCassa = round2(accontiCassa / 2);
     generatedF24.push({ id: "_cassa_acc1", date: `${y}-06-30`, code: "3801", desc: `1° acconto ${cassaLabel} ${yr} (${cassaAccontoPct}% ${basedOn}, 1ª rata)`, amount: rataCassa, status: statusOf(fiscal.cassaAcconto1Paid), _generated: true });
     generatedF24.push({ id: "_cassa_acc2", date: `${y}-11-30`, code: "3801", desc: `2° acconto ${cassaLabel} ${yr} (${cassaAccontoPct}% ${basedOn}, 2ª rata)`, amount: rataCassa, status: statusOf(fiscal.cassaAcconto2Paid), _generated: true });
     if (saldoCassa > 0) {
@@ -276,8 +309,6 @@ function computeTaxes(activities, expenses, fiscal, year, clients, studio, invoi
   // the merge on id could never match and every deadline was listed twice —
   // once as an estimate and once as the real entry, with the totals adding both.
   // What the user recorded wins; the estimate only fills a gap.
-  const recorded = fiscal.f24History || [];
-  const key = f => f.date + "|" + f.code;
   // A FACT beats a computation: an entry the user marked paid or scheduled is
   // what happened, and the estimate for that deadline is dropped. A recorded
   // row still marked "estimated" is not a fact, so the computed figure — which
@@ -309,6 +340,9 @@ function computeTaxes(activities, expenses, fiscal, year, clients, studio, invoi
     ivaCredito,
     ivaSaldo: ivaDebito - ivaCredito,
     costiDeducibili,
+    costiEsercizio,
+    quoteAmmortamento,
+    contributiVersati,
     reddNettoLordoCassa,
     contribCassa,
     contribFisso,
@@ -563,9 +597,12 @@ const TaxWaterfall = ({ tax, studio }) => {
   const cassaLabel = studio?.cassaName || "Cassa prev.";
   const max = tax.compensi || 1;
   const items = [
-    { label: "Compensi imponibili", value: tax.compensi, type: "in" },
-    { label: "− Costi deducibili (esercizio)", value: -tax.costiDeducibili, type: "neg" },
-    { label: `− Contributi ${cassaLabel}`, value: -tax.contribCassa, type: "neg" },
+    { label: "Compensi incassati", value: tax.compensi, type: "in" },
+    { label: "− Costi di esercizio dell'anno", value: -tax.costiEsercizio, type: "neg" },
+    { label: "− Quote di ammortamento", value: -tax.quoteAmmortamento, type: "neg" },
+    // Si deduce quanto VERSATO nell'anno, non quanto maturato: il contributo
+    // dovuto su quest'anno si dedurrà nell'anno in cui lo paghi.
+    { label: `− Contributi ${cassaLabel} versati nell'anno`, value: -tax.contributiVersati, type: "neg" },
     { label: "= Reddito imponibile IRPEF", value: tax.redditoImpIrpef, type: "sub" },
     { label: "− IRPEF lorda + addizionali", value: -tax.irpefLordaTot, type: "neg" },
     { label: "+ Ritenute già trattenute (credito)", value: tax.ritenutaTrattenuta, type: "in" },
@@ -702,10 +739,47 @@ const AccontoDelta = ({ dovuto, acconti, delta }) => (
   </div>
 );
 
+// La derivazione dell'imponibile, riga per riga: ogni voce è calcolata dai
+// documenti e dai versamenti, nessuna è un valore impostato a mano.
+const IrpefBase = ({ tax }) => {
+  const righe = [
+    ["Compensi incassati", tax.compensi, null],
+    ["− Costi di esercizio dell'anno", -tax.costiEsercizio, null],
+    ["− Quote di ammortamento", -tax.quoteAmmortamento,
+      tax.fy.cespiti.length ? `${tax.fy.cespiti.filter(c => c.quotaYear > 0).length} cespiti in ammortamento` : null],
+    ["− Contributi versati nell'anno", -tax.contributiVersati,
+      tax.contributiVersati > 0 ? "dedotti per cassa (art. 10 TUIR)" : "nessun versamento registrato: nulla da dedurre"],
+  ];
+  return (
+    <div className="card-body" style={{ borderBottom: "1px solid var(--border)" }}>
+      {righe.map(([label, value, hint], i) => (
+        <div key={i} style={{ marginBottom: 6 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5 }}>
+            <span style={{ color: "var(--text-secondary)" }}>{label}</span>
+            <span className="mono">{fmtEUR(value)}</span>
+          </div>
+          {hint && <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{hint}</div>}
+        </div>
+      ))}
+      <div style={{ display: "flex", justifyContent: "space-between", paddingTop: 8, marginTop: 4, borderTop: "1px solid var(--border)", fontWeight: 700, fontSize: 14 }}>
+        <span>= Reddito imponibile IRPEF</span>
+        <span className="mono">{fmtEUR(tax.redditoImpIrpef)}</span>
+      </div>
+      {tax.contribCassa > tax.contributiVersati && (
+        <div style={{ fontSize: 11.5, color: "var(--text-muted)", marginTop: 8, lineHeight: 1.5 }}>
+          Il contributo maturato su quest'anno è {fmtEUR(tax.contribCassa)}: si dedurrà
+          nell'anno in cui lo verserai, non in questo.
+        </div>
+      )}
+    </div>
+  );
+};
+
 const TaxIRPEF = ({ tax, fiscal }) => (
   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
     <div className="card">
       <div className="card-header"><h3>Calcolo IRPEF a scaglioni</h3></div>
+      <IrpefBase tax={tax} />
       <table className="data">
         <thead>
           <tr>
@@ -871,8 +945,15 @@ const TaxCassa = ({ tax, fiscal, studio, onUpdateFiscal }) => {
             <span>Contributo soggettivo annuo</span>
             <span className="mono">{fmtEUR(tax.contribCassa)}</span>
           </div>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
+            <span style={{ color: "var(--text-secondary)" }}>di cui versato nell'anno</span>
+            <span className="mono" style={{ color: "var(--success)" }}>{fmtEUR(tax.contributiVersati)}</span>
+          </div>
           <div style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.6 }}>
-            Il contributo è <strong>integralmente deducibile</strong> dal reddito imponibile IRPEF dell'anno di versamento.
+            Il contributo è <strong>integralmente deducibile</strong> dal reddito imponibile
+            IRPEF <strong>dell'anno di versamento</strong>: la deduzione in questa schermata è
+            quindi {fmtEUR(tax.contributiVersati)}, non il maturato. Spunta le rate versate
+            qui sotto, o registra l'F24, perché entri nella deduzione.
           </div>
           {/* Acconti — toggleable */}
           <div style={{ padding: 12, border: "1px solid var(--border)", borderRadius: 4 }}>
