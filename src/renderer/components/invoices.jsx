@@ -381,17 +381,33 @@ const InvoiceDrawer = ({ invoice, clients, onSave, onClose }) => {
               <input type="number" className="input mono" min="0" max="100" value={edit.fiscal.vatDetractPct}
                 onChange={e => setFiscal({ vatDetractPct: Math.min(100, Math.max(0, +e.target.value)) })} />
             </div>
-            <div className="field">
-              <label>{t('inv.asset')}</label>
-              <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <input type="checkbox" checked={!!edit.fiscal.amortize}
-                  onChange={e => setFiscal({ amortize: e.target.checked, amortYears: e.target.checked ? (edit.fiscal.amortYears || 4) : null, firstYearHalf: true })} />
-                <span>{t('inv.amortYears')}</span>
-                <input type="number" className="input mono" style={{ width: 70 }} min="1" max="20"
-                  disabled={!edit.fiscal.amortize} value={edit.fiscal.amortYears || 4}
-                  onChange={e => setFiscal({ amortYears: Math.max(1, +e.target.value) })} />
-              </label>
-            </div>
+            {/* art. 102 c.5 TUIR: sotto soglia il bene si deduce per intero
+                nell'esercizio, quindi la casella non va nemmeno offerta — il
+                motore la ignorerebbe e il controllo mentirebbe. */}
+            {(() => {
+              const sopraSoglia = window.exceedsAmortizeThreshold(invoice.totals.imponibile);
+              return (
+                <div className="field">
+                  <label>{t('inv.asset')}</label>
+                  {sopraSoglia ? (
+                    <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <input type="checkbox" checked={!!edit.fiscal.amortize}
+                        onChange={e => setFiscal({ amortize: e.target.checked, amortYears: e.target.checked ? (edit.fiscal.amortYears || 4) : null, firstYearHalf: true })} />
+                      <span>{t('inv.amortYears')}</span>
+                      <input type="number" className="input mono" style={{ width: 70 }} min="1" max="20"
+                        disabled={!edit.fiscal.amortize} value={edit.fiscal.amortYears || 4}
+                        onChange={e => setFiscal({ amortYears: Math.max(1, +e.target.value) })} />
+                    </label>
+                  ) : (
+                    <div className="hint">
+                      Imponibile {fmtEUR(invoice.totals.imponibile)}: non superiore a{" "}
+                      {fmtEUR(window.AMORTIZE_THRESHOLD)}, si deduce per intero nell'esercizio
+                      (art. 102 c.5 TUIR).
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
           </>
         )}
 

@@ -6,13 +6,17 @@
 (function (root, factory) {
   const categories = (typeof module !== 'undefined' && module.exports)
     ? require('../shared/categories')
-    : { CATEGORY_RULES: root.CATEGORY_RULES, AMORTIZE_THRESHOLD: root.AMORTIZE_THRESHOLD };
+    : {
+      CATEGORY_RULES: root.CATEGORY_RULES,
+      AMORTIZE_THRESHOLD: root.AMORTIZE_THRESHOLD,
+      exceedsAmortizeThreshold: root.exceedsAmortizeThreshold,
+    };
   const api = factory(categories);
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   if (typeof window !== 'undefined') Object.assign(window, api);
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (categories) {
 
-  const { CATEGORY_RULES, AMORTIZE_THRESHOLD } = categories;
+  const { CATEGORY_RULES, AMORTIZE_THRESHOLD, exceedsAmortizeThreshold } = categories;
   const round2 = n => Math.round((Number(n) || 0) * 100) / 100;
   const pct = v => (v == null ? 100 : Number(v));
 
@@ -24,11 +28,14 @@
     const vatDetracted = e.billable
       ? vat
       : (e.vatExempt ? 0 : vat * Math.min(e.deductPct, 100) / 100);
-    const yearlyDeducted = e.amortize
+    // La casella "ammortizza" da sola non basta: sotto soglia il bene si deduce
+    // integralmente nell'esercizio (art. 102 c.5 TUIR). Senza questa condizione
+    // un cavo da 30 € spuntato a mano si spalmava su cinque anni.
+    const inAmortization = !e.billable && e.amortize === true
+      && exceedsAmortizeThreshold(net);
+    const yearlyDeducted = inAmortization
       ? (net * e.deductPct / 100) / (e.amortYears || 4)
       : net * e.deductPct / 100;
-    const inAmortization = e.amortize === true
-      || (!e.billable && net > AMORTIZE_THRESHOLD && (e.category === "Hardware" || e.category === "Auto"));
     return {
       gross, net, vat, vatDetracted, yearlyDeducted, inAmortization,
       nonDeductible: net - (net * e.deductPct / 100),
@@ -54,6 +61,16 @@
   }
 
   // ── Invoice-backed costs ───────────────────────────────────────────────────
+  // Un documento è un cespite solo se tutte e tre le condizioni valgono. Sta
+  // qui, e non nella sola proposta d'import, perché la casella si può spuntare
+  // a mano nel drawer e da lì nessun controllo passava: il costo risultava in
+  // ammortamento senza che la soglia fosse superata.
+  function isCespite(fiscal, imponibile, sign) {
+    return !!(fiscal && fiscal.amortize)
+      && (sign == null ? 1 : sign) > 0
+      && exceedsAmortizeThreshold(imponibile);
+  }
+
   function invoiceCostFiscals(inv) {
     const f = inv.fiscal || {};
     const sign = inv.sign || 1;
@@ -61,7 +78,7 @@
     const imposta = round2(sign * (inv.totals.imposta || 0));
     // A credit note is a return, not an acquisition: it must remove cost now,
     // never open (or top up) an amortization schedule.
-    const inAmortization = !!f.amortize && sign > 0;
+    const inAmortization = isCespite(f, inv.totals.imponibile, sign);
     return {
       imponibile,
       imposta,
@@ -211,13 +228,13 @@
     // in 2023 is still deducting its quota today, and reading only this year's
     // documents is what made every quota after the purchase disappear.
     const costInvoices = invoices.filter(i => i.direction === 'passive');
-    const amortizedExpenses = expenses.filter(e => !e.billable && e.amortize === true);
+    const amortizedExpenses = expenses.filter(e => computeExpenseFiscals(e).inAmortization);
     const withYear = s => ({
       ...s, quotaYear: amortQuotaFor(s, year), residual: amortResidualAt(s, year),
     });
     const cespiti = [
       ...costInvoices
-        .filter(i => i.fiscal && i.fiscal.amortize && (i.sign || 1) > 0)
+        .filter(i => isCespite(i.fiscal, i.totals.imponibile, i.sign))
         .map(i => withYear(buildAmortSchedule(i))),
       ...amortizedExpenses.map(e => withYear(buildExpenseAmortSchedule(e))),
     ];
@@ -230,7 +247,7 @@
     // A cespite deducts by competenza through its schedule, so it is the one
     // cost that escapes the cash basis; everything else waits to be paid.
     const paidThisYear = costInvoices.filter(i =>
-      settledInYear(i) && !(i.fiscal && i.fiscal.amortize && (i.sign || 1) > 0));
+      settledInYear(i) && !isCespite(i.fiscal, i.totals.imponibile, i.sign));
     // An amortized expense deducts through its schedule above, so it must not
     // also contribute its flat yearly quota here — that would count the year of
     // purchase twice.
@@ -240,7 +257,7 @@
     const quoteAmmortamento = round2(cespiti.reduce((s, c) => s + c.quotaYear, 0));
     const costiEsercizio = round2(
       paidThisYear.reduce((s, i) => s + invoiceCostFiscals(i).deductible, 0)
-      + manual.filter(e => e.amortize !== true)
+      + manual.filter(e => !computeExpenseFiscals(e).inAmortization)
         .reduce((s, e) => s + computeExpenseFiscals(e).yearlyDeducted, 0)
     );
     const costiDeducibili = round2(costiEsercizio + quoteAmmortamento);
@@ -329,7 +346,7 @@
   }
 
   return {
-    round2, CATEGORY_RULES, AMORTIZE_THRESHOLD,
+    round2, CATEGORY_RULES, AMORTIZE_THRESHOLD, exceedsAmortizeThreshold, isCespite,
     computeExpenseFiscals, invoiceCostFiscals, settlementDateFor,
     amortSchedule, buildAmortSchedule, buildExpenseAmortSchedule,
     amortQuotaFor, amortResidualAt,

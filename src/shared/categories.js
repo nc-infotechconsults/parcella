@@ -36,6 +36,15 @@
 
   const AMORTIZE_THRESHOLD = 516.46;
 
+  // art. 102 c.5 TUIR: un bene il cui costo NON È SUPERIORE a 516,46 € si
+  // deduce integralmente nell'esercizio. La soglia si supera, non si raggiunge,
+  // e il confronto vive in un posto solo: categories.js usava >= e fiscal.js >,
+  // quindi a 516,46 esatti la proposta d'import e il motore si contraddicevano.
+  function exceedsAmortizeThreshold(amount) {
+    const n = Number(amount);
+    return isFinite(n) && Math.abs(n) > AMORTIZE_THRESHOLD;
+  }
+
   // ORDER IS THE POLICY: first match wins, so concrete categories precede
   // generic ones. A parking invoice reading "Totale soste" and "Canone
   // abbonamento" must land on Auto, not Software; a line reading "corso" is
@@ -89,7 +98,7 @@
     // Hardware is a cost, not a cespite.
     const amortize = rule.amortize === true
       && sign > 0
-      && (o.imponibile || 0) >= AMORTIZE_THRESHOLD;
+      && exceedsAmortizeThreshold(o.imponibile);
     return {
       category: name,
       deductPct: rule.deductPct == null ? 100 : rule.deductPct,
@@ -120,5 +129,8 @@
     return out;
   }
 
-  return { CATEGORY_RULES, AMORTIZE_THRESHOLD, guessCategory, fiscalForCategory, effectiveCategories };
+  return {
+    CATEGORY_RULES, AMORTIZE_THRESHOLD, exceedsAmortizeThreshold,
+    guessCategory, fiscalForCategory, effectiveCategories,
+  };
 });

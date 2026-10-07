@@ -4,16 +4,19 @@
 //   billable: false → studio cost
 //     vatExempt: true → no IVA detracted
 //     deductPct: 0-100 → IRPEF deductible portion (es. 80% telefono, 20% auto, 75% pasti)
-//     amortize: true + amortYears → cespite (>= 516.46€ rule)
+//     amortize: true + amortYears → cespite, solo se l'imponibile SUPERA
+//     516,46 € (art. 102 c.5 TUIR); sotto soglia si deduce per intero
 
 // Fiscal rules live in src/renderer/fiscal.js and src/shared/categories.js so
 // that Node tests can assert them. These aliases keep existing call sites working.
-const CATEGORY_RULES = window.CATEGORY_RULES;
+// Le regole si leggono al momento dell'uso, non all'avvio: app.jsx sostituisce
+// window.CATEGORY_RULES con quelle configurate dall'utente DOPO il caricamento
+// degli script, quindi una copia presa qui restava ferma sui valori di default
+// e questo modulo ignorava le categorie configurate. invoices.jsx e il wizard
+// leggono già così.
+const rules = () => window.CATEGORY_RULES || {};
 const AMORTIZE_THRESHOLD = window.AMORTIZE_THRESHOLD;
 const computeExpenseFiscals = window.computeExpenseFiscals;
-window.computeExpenseFiscals = computeExpenseFiscals;
-window.CATEGORY_RULES = CATEGORY_RULES;
-window.AMORTIZE_THRESHOLD = AMORTIZE_THRESHOLD;
 
 const Expenses = ({ clients, expenses, currentMonthKey, onAdd, onEdit, onDelete }) => {
   const [tab, setTab] = useState("billable");
@@ -254,20 +257,27 @@ const ExpenseForm = ({ expense, defaultBillable, clients, onSave, onCancel, onDe
 
   // Apply category rules when category changes
   const applyCategory = (cat) => {
-    const rule = CATEGORY_RULES[cat] || {};
-    const shouldAmortize = !data.billable && (cat === "Hardware" || cat === "Auto") && data.amount > AMORTIZE_THRESHOLD * (1 + (rule.vatPct || 0) / 100);
+    const rule = rules()[cat] || {};
+    const vatPct = rule.vatPct ?? data.vatPct;
+    const vatExempt = rule.vatExempt ?? false;
+    const net = vatExempt ? data.amount : data.amount / (1 + (vatPct || 0) / 100);
+    // Una sola fonte per le tre condizioni (categoria, segno, soglia): prima
+    // qui c'era un elenco di categorie scritto a mano — Hardware e Auto — che
+    // ignorava la casella "ammortizza" configurata sulle categorie.
+    const fc = window.fiscalForCategory(cat, { sign: 1, imponibile: net, rules: rules() });
     update({
       category: cat,
-      vatPct: rule.vatPct ?? data.vatPct,
-      vatExempt: rule.vatExempt ?? false,
-      deductPct: data.billable ? 100 : (rule.deductPct ?? 100),
-      amortize: data.billable ? false : (data.amortize || shouldAmortize),
+      vatPct,
+      vatExempt,
+      deductPct: data.billable ? 100 : fc.deductPct,
+      amortize: data.billable ? false : fc.amortize,
+      amortYears: fc.amortize ? fc.amortYears : null,
     });
   };
 
   const f = computeExpenseFiscals(data);
-  const exceedsThreshold = !data.billable && f.net > AMORTIZE_THRESHOLD;
-  const rule = CATEGORY_RULES[data.category];
+  const exceedsThreshold = !data.billable && window.exceedsAmortizeThreshold(f.net);
+  const rule = rules()[data.category];
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -300,7 +310,7 @@ const ExpenseForm = ({ expense, defaultBillable, clients, onSave, onCancel, onDe
         <div className="field">
           <label>Categoria</label>
           <select className="select" value={data.category} onChange={e => applyCategory(e.target.value)}>
-            {Object.keys(CATEGORY_RULES).map(c => <option key={c} value={c}>{c}</option>)}
+            {Object.keys(rules()).map(c => <option key={c} value={c}>{c}</option>)}
           </select>
           {rule?.hint && (
             <div className="hint" style={{ color: "var(--accent)" }}>ⓘ {rule.hint}</div>
