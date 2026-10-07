@@ -13,7 +13,9 @@ const InvoiceBadges = ({ inv }) => (
 const Invoices = ({ invoices, clients, expenses, fiscal, currentYear, onImport, onEdit, onDelete, onBulkUpdate, onBulkDelete }) => {
   const [tab, setTab] = useState("active");
   const [picked, setPicked] = useState([]);
-  const [bulkDate, setBulkDate] = useState(new Date().toISOString().slice(0, 10));
+  // Vuoto = la data di ciascun documento. Era oggi, e un lotto di fatture di
+  // anni pregressi finiva tutto nella cassa dell'anno corrente.
+  const [bulkDate, setBulkDate] = useState('');
   const [yearFilter, setYearFilter] = useState(String(currentYear));
   const [periodFilter, setPeriodFilter] = useState("all");
 
@@ -35,7 +37,10 @@ const Invoices = ({ invoices, clients, expenses, fiscal, currentYear, onImport, 
   const selInvoices = () => list.filter(i => sel.includes(i.id));
 
   const bulkSettle = () => onBulkUpdate(sel, inv => ({
-    settlement: { ...inv.settlement, status: 'settled', date: bulkDate },
+    settlement: {
+      ...inv.settlement, status: 'settled',
+      date: window.settlementDateFor(inv, bulkDate),
+    },
   }));
   const bulkOpen = () => onBulkUpdate(sel, inv => ({
     settlement: { ...inv.settlement, status: 'open' },
@@ -152,7 +157,11 @@ const Invoices = ({ invoices, clients, expenses, fiscal, currentYear, onImport, 
               padding: '8px 12px', background: 'var(--bg-sunken)', borderBottom: '1px solid var(--border)' }}>
               <strong>{t('imp.selectedCount', { n: sel.length })}</strong>
               <input type="date" className="input mono" style={{ width: 150 }}
+                title="Vuoto: usa la data di ciascun documento"
                 value={bulkDate} onChange={e => setBulkDate(e.target.value)} />
+              <span className="hint">
+                {bulkDate ? 'per tutte le selezionate' : 'vuoto = data di ciascun documento'}
+              </span>
               <button className="btn btn-sm" onClick={bulkSettle}>{t('imp.bulkSettle')}</button>
               <button className="btn btn-sm" onClick={bulkOpen}>{t('inv.bulkReopen')}</button>
               <select className="select" value="" onChange={e => { if (e.target.value) bulkCategory(e.target.value); }}>
@@ -270,8 +279,8 @@ const InvoiceDrawer = ({ invoice, clients, onSave, onClose }) => {
     settlement: {
       ...x.settlement,
       status,
-      date: status === "settled" && !x.settlement.date
-        ? new Date().toISOString().slice(0, 10)
+      date: status === "settled"
+        ? window.settlementDateFor(invoice, x.settlement.date)
         : x.settlement.date,
     },
   }));

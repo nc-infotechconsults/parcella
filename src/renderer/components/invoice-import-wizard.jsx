@@ -43,8 +43,10 @@ const InvoiceImportWizard = ({ open, onClose, onImported }) => {
 
   const setDecision = (id, patch) => setDecisions(d => ({ ...d, [id]: { ...d[id], ...patch } }));
 
-  const today = () => new Date().toISOString().slice(0, 10);
-  const [bulkDate, setBulkDate] = useState(today());
+  // Vuoto = la data di ciascun documento. Era preimpostato a oggi, e marcare
+  // incassato un lotto di fatture di anni pregressi le portava tutte nella
+  // cassa dell'anno corrente.
+  const [bulkDate, setBulkDate] = useState('');
 
   // Shared with the importer and the invoice list — see src/shared/categories.js.
   const fiscalForCategory = (item, fiscal, cat) => window.fiscalForCategory(cat, {
@@ -62,7 +64,12 @@ const InvoiceImportWizard = ({ open, onClose, onImported }) => {
     decisions[i.id] && decisions[i.id].accept && i.status !== 'imported') : []);
   const selectedCount = selected().length;
   const bulkSettle = () => selected().forEach(it =>
-    setDecision(it.id, { settlement: { ...settlementOf(it), status: 'settled', date: bulkDate } }));
+    setDecision(it.id, {
+      settlement: {
+        ...settlementOf(it), status: 'settled',
+        date: window.settlementDateFor(it.doc, bulkDate),
+      },
+    }));
   const bulkCategory = cat => selected().filter(it => it.direction === 'passive').forEach(it => {
     const d = decisions[it.id];
     setDecision(it.id, { fiscal: fiscalForCategory(it, d.fiscal || it.proposal.fiscal, cat) });
@@ -136,7 +143,11 @@ const InvoiceImportWizard = ({ open, onClose, onImported }) => {
               border: '1px solid var(--border)', borderRadius: 'var(--radius)' }}>
               <strong>{t('imp.selectedCount', { n: selectedCount })}</strong>
               <input type="date" className="input mono" style={{ width: 150 }}
+                title="Vuoto: usa la data di ciascun documento"
                 value={bulkDate} onChange={e => setBulkDate(e.target.value)} />
+              <span className="hint" style={{ marginLeft: -4 }}>
+                {bulkDate ? 'per tutte le selezionate' : 'vuoto = data di ciascun documento'}
+              </span>
               <button className="btn btn-sm" onClick={bulkSettle}>{t('imp.bulkSettle')}</button>
               <select className="select" value="" onChange={e => { if (e.target.value) bulkCategory(e.target.value); }}>
                 <option value="">{t('imp.bulkCategory')}</option>
@@ -228,7 +239,7 @@ const InvoiceImportWizard = ({ open, onClose, onImported }) => {
                             onChange={e => setSettlement(it, {
                               status: e.target.value,
                               date: e.target.value === 'settled'
-                                ? (settlementOf(it).date || bulkDate || today())
+                                ? window.settlementDateFor(it.doc, settlementOf(it).date || bulkDate)
                                 : settlementOf(it).date,
                             })}>
                             <option value="open">{it.direction === 'active' ? t('inv.open') : t('inv.openPassive')}</option>

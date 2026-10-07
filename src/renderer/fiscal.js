@@ -35,6 +35,24 @@
     };
   }
 
+  // ── Quando un documento si considera incassato/pagato ──────────────────────
+  // Marcare "incassata" una fattura di un anno pregresso le stampava la data di
+  // oggi, spostandola nella cassa dell'anno corrente: il costo di un acquisto
+  // 2023 diventava deducibile nel 2026 e un ricavo 2023 entrava nei compensi
+  // 2026. Oggi non è una prova di niente — le date del documento lo sono.
+  function settlementDateFor(doc, explicit, now) {
+    if (explicit) return explicit;
+    const today = now || new Date().toISOString().slice(0, 10);
+    const due = (doc && doc.payment && doc.payment.dueDate) || null;
+    // La scadenza in fattura è la prova migliore, ma solo se è già passata: un
+    // pagamento non può essere avvenuto a una data futura, e prenderla
+    // sposterebbe il documento nell'esercizio successivo.
+    if (due && due <= today) return due;
+    // Altrimenti l'emissione, che è sempre nell'anno giusto.
+    const issued = (doc && doc.date) || null;
+    return issued || today;
+  }
+
   // ── Invoice-backed costs ───────────────────────────────────────────────────
   function invoiceCostFiscals(inv) {
     const f = inv.fiscal || {};
@@ -312,7 +330,7 @@
 
   return {
     round2, CATEGORY_RULES, AMORTIZE_THRESHOLD,
-    computeExpenseFiscals, invoiceCostFiscals,
+    computeExpenseFiscals, invoiceCostFiscals, settlementDateFor,
     amortSchedule, buildAmortSchedule, buildExpenseAmortSchedule,
     amortQuotaFor, amortResidualAt,
     computeFiscalYear,
