@@ -420,7 +420,8 @@ const App = () => {
           onBulkUpdate={handleBulkUpdateInvoices} onBulkDelete={handleBulkDeleteInvoices} />}
           {view === "settings" && <Settings user={s} onSave={d => setStudio(d)} onResetData={handleResetData}
             categories={categories} invoices={invoices} expenses={expenses}
-            onSaveCategories={handleSaveCategories} />}
+            onSaveCategories={handleSaveCategories}
+            fiscal={fiscal || window.APP_DATA.fiscal} onSaveFiscal={f => setFiscal(f)} />}
           {view === "taxes" && <Taxes activities={activities} expenses={expenses} fiscal={fiscal || window.APP_DATA.fiscal}
             clients={clients} studio={s} invoices={invoices} year={year}
             onUpdateFiscal={f => setFiscal(f)} />}

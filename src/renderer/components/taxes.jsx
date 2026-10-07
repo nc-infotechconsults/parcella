@@ -7,9 +7,25 @@
 // liability and last year's, which is what the acconti are based on.
 function taxLiability(fy, fiscal, tipo) {
   const r2 = n => Math.round((Number(n) || 0) * 100) / 100;
+  // Un campo svuotato in Impostazioni torna al default; uno messo a zero resta
+  // zero, perché "nessuna addizionale comunale" è una risposta legittima.
+  const num = (v, def) => (v == null || v === "" || isNaN(Number(v)) ? def : Number(v));
   const compensi = fy.consuntivo.ricaviIncassati;
   const costiDeducibili = fy.consuntivo.costiDeducibili;
   const ritenuta = fy.consuntivo.ritenutaIncassata;
+
+  // Le aliquote effettive si risolvono UNA volta qui e vengono restituite: la
+  // schermata le mostra da qui invece di rileggere fiscal.* e riapplicare un
+  // default proprio, che è come un'aliquota svuotata in Impostazioni poteva
+  // comparire a video diversa da quella usata nel conto.
+  const aliquote = {
+    cassaContribPct: num(fiscal.cassaContribPct, 14.5),
+    addRegPct: num(fiscal.addRegPct, 0),
+    addComPct: num(fiscal.addComPct, 0),
+    irapPct: num(fiscal.irapPct, 3.9),
+    inpsMinimale: num(fiscal.inpsMinimale, 4427),
+    inpsPctVariabile: num(fiscal.inpsPctVariabile, 24.0),
+  };
 
   const reddNettoLordoCassa = Math.max(0, compensi - costiDeducibili);
   let contribCassa = 0;
@@ -19,33 +35,39 @@ function taxLiability(fy, fiscal, tipo) {
   let irap = 0;
 
   if (tipo === "professionista") {
-    contribCassa = Math.max(0, reddNettoLordoCassa * (fiscal.cassaContribPct || 14.5) / 100);
+    contribCassa = Math.max(0, reddNettoLordoCassa * aliquote.cassaContribPct / 100);
   } else if (tipo === "ditta_individuale") {
     // INPS artigiani/commercianti: fisso (minimale) + variabile su eccedente
-    const minimale = fiscal.inpsMinimale || 4427;
-    const pctVar = fiscal.inpsPctVariabile || 24.0;
     const reddBase = 18415; // reddito minimale INPS 2025 (fissato INPS)
-    contribFisso = minimale;
-    contribVar = Math.max(0, (reddNettoLordoCassa - reddBase) * pctVar / 100);
+    contribFisso = aliquote.inpsMinimale;
+    contribVar = Math.max(0, (reddNettoLordoCassa - reddBase) * aliquote.inpsPctVariabile / 100);
     contribCassa = contribFisso + contribVar;
     // IRAP solo se autonoma organizzazione (lasciamo all'utente configurare)
     irapBase = Math.max(0, reddNettoLordoCassa - 8000); // deduzione base €8k
-    irap = irapBase * (fiscal.irapPct || 3.9) / 100;
+    irap = irapBase * aliquote.irapPct / 100;
   }
 
   const redditoImpIrpef = Math.max(0, reddNettoLordoCassa - contribCassa);
+  // L'ultimo scaglione non ha tetto, e il profilo lo registra come upTo: null.
+  // Math.min(reddito, null) vale 0, quindi l'aliquota massima si applicava a
+  // niente e tutto il reddito oltre il penultimo scaglione era tassato a zero.
+  const brackets = (fiscal.irpefBrackets && fiscal.irpefBrackets.length)
+    ? fiscal.irpefBrackets
+    : [{ upTo: 28000, rate: 23 }, { upTo: 50000, rate: 35 }, { upTo: null, rate: 43 }];
   let irpefLorda = 0, prevBracket = 0;
-  for (const b of (fiscal.irpefBrackets || [{ upTo: 28000, rate: 23 }, { upTo: 50000, rate: 35 }, { upTo: Infinity, rate: 43 }])) {
-    const inBracket = Math.max(0, Math.min(redditoImpIrpef, b.upTo) - prevBracket);
-    irpefLorda += inBracket * b.rate / 100;
-    prevBracket = b.upTo;
-    if (redditoImpIrpef <= b.upTo) break;
+  for (const b of brackets) {
+    const cap = num(b.upTo, Infinity);
+    const inBracket = Math.max(0, Math.min(redditoImpIrpef, cap) - prevBracket);
+    irpefLorda += inBracket * num(b.rate, 0) / 100;
+    prevBracket = cap;
+    if (redditoImpIrpef <= cap) break;
   }
-  const addReg = redditoImpIrpef * (fiscal.addRegPct || 0) / 100;
-  const addCom = redditoImpIrpef * (fiscal.addComPct || 0) / 100;
+  const addReg = redditoImpIrpef * aliquote.addRegPct / 100;
+  const addCom = redditoImpIrpef * aliquote.addComPct / 100;
   const irpefLordaTot = irpefLorda + addReg + addCom;
 
   return {
+    aliquote, brackets,
     compensi, costiDeducibili, ritenuta,
     reddNettoLordoCassa,
     contribCassa: r2(contribCassa), contribFisso, contribVar, irapBase, irap,
@@ -309,6 +331,8 @@ function computeTaxes(activities, expenses, fiscal, year, clients, studio, invoi
     f24All,        // scadenze generate + manuali
     totaleAnno,
     // Acconti e delta (metodo storico)
+    aliquote: cur.aliquote,
+    brackets: cur.brackets,
     prevYear: prev,
     prevYr,
     cassaAccontoPct,
@@ -400,7 +424,7 @@ const Taxes = ({ activities, expenses, fiscal, clients, studio, invoices, year: 
         <TaxIVA tax={tax} fiscal={fiscal} fiscalYear={fiscalYear} />
       )}
       {tab === "irpef" && (
-        <TaxIRPEF tax={tax} fiscal={fiscal} onUpdateFiscal={onUpdateFiscal} />
+        <TaxIRPEF tax={tax} fiscal={fiscal} />
       )}
       {tab === "cassa" && (
         <TaxCassa tax={tax} fiscal={fiscal} studio={studio} onUpdateFiscal={onUpdateFiscal} />
@@ -648,16 +672,14 @@ const TaxIVA = ({ tax, fiscal, fiscalYear }) => (
 // Gli acconti sono tarati sull'anno scorso; questa riga dice di quanto
 // l'andamento reale di quest'anno se ne discosta — cioè cosa resterà da
 // versare a saldo, o quanto è stato versato in più.
-// Senza i documenti dell'anno prima la base è una stima: va messa a mano,
-// altrimenti gli acconti restano fermi sul valore con cui il profilo è nato.
-const PrevYearBase = ({ value, year, onChange }) => (
-  <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6, fontSize: 12 }}>
-    <span style={{ color: "var(--text-secondary)" }}>Base {year} €</span>
-    <input
-      className="input mono" type="number" step="0.01" min="0"
-      style={{ width: 120, height: 26, fontSize: 12 }}
-      value={value || 0}
-      onChange={e => onChange(Math.max(0, Number(e.target.value) || 0))} />
+// Questa schermata legge le aliquote, non le decide: si modificano in
+// Impostazioni → Fiscalità, dove le si cambia deliberatamente e non per
+// sbaglio mentre si sta leggendo un consuntivo.
+const RateFromSettings = ({ label, value }) => (
+  <div style={{ display: "flex", alignItems: "baseline", gap: 10, fontSize: 12.5 }}>
+    <span style={{ color: "var(--text-secondary)", flex: 1 }}>{label}</span>
+    <span className="mono" style={{ fontWeight: 600 }}>{value}</span>
+    <span style={{ fontSize: 11, color: "var(--text-muted)" }}>Impostazioni → Fiscalità</span>
   </div>
 );
 
@@ -680,7 +702,7 @@ const AccontoDelta = ({ dovuto, acconti, delta }) => (
   </div>
 );
 
-const TaxIRPEF = ({ tax, fiscal, onUpdateFiscal }) => (
+const TaxIRPEF = ({ tax, fiscal }) => (
   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
     <div className="card">
       <div className="card-header"><h3>Calcolo IRPEF a scaglioni</h3></div>
@@ -693,19 +715,25 @@ const TaxIRPEF = ({ tax, fiscal, onUpdateFiscal }) => (
         </thead>
         <tbody>
           {(() => {
+            // Stessa risoluzione del motore (tetto aperto = Infinity), sulla
+            // stessa tabella che il motore ha usato: due letture diverse di
+            // fiscal.irpefBrackets è come la riga dell'aliquota massima
+            // mostrava zero imponibile mentre l'imposta era già sbagliata.
             let prev = 0;
-            return fiscal.irpefBrackets.map((b, i) => {
-              const inB = Math.max(0, Math.min(tax.redditoImpIrpef, b.upTo) - prev);
-              const taxAmt = inB * b.rate / 100;
-              const upToLabel = b.upTo === Infinity ? "oltre" : fmtEUR(b.upTo);
+            return tax.brackets.map((b, i) => {
+              const cap = (b.upTo == null || b.upTo === "" || isNaN(Number(b.upTo)))
+                ? Infinity : Number(b.upTo);
+              const rate = Number(b.rate) || 0;
+              const inB = Math.max(0, Math.min(tax.redditoImpIrpef, cap) - prev);
+              const upToLabel = cap === Infinity ? "oltre" : fmtEUR(cap);
               const lo = prev === 0 ? "0" : fmtEUR(prev);
-              prev = b.upTo;
+              prev = cap;
               return (
                 <tr key={i}>
                   <td className="mono">{lo} — {upToLabel}</td>
-                  <td className="num"><strong>{b.rate}%</strong></td>
+                  <td className="num"><strong>{rate}%</strong></td>
                   <td className="num mono">{fmtEUR(inB)}</td>
-                  <td className="num mono">{fmtEUR(taxAmt)}</td>
+                  <td className="num mono">{fmtEUR(inB * rate / 100)}</td>
                 </tr>
               );
             });
@@ -726,11 +754,11 @@ const TaxIRPEF = ({ tax, fiscal, onUpdateFiscal }) => (
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           <div style={{ background: "var(--bg-sunken)", padding: 14, borderRadius: 4 }}>
             <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
-              <span>Addizionale regionale ({fiscal.addRegPct}%)</span>
+              <span>Addizionale regionale ({tax.aliquote.addRegPct}%)</span>
               <span className="mono">{fmtEUR(tax.addReg)}</span>
             </div>
             <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
-              <span>Addizionale comunale ({fiscal.addComPct}%)</span>
+              <span>Addizionale comunale ({tax.aliquote.addComPct}%)</span>
               <span className="mono">{fmtEUR(tax.addCom)}</span>
             </div>
             <div style={{ display: "flex", justifyContent: "space-between", paddingTop: 8, borderTop: "1px solid var(--border)", fontWeight: 700 }}>
@@ -754,10 +782,6 @@ const TaxIRPEF = ({ tax, fiscal, onUpdateFiscal }) => (
               <span>2° acconto (60%) · entro 30 nov · {fmtEUR(tax.accontiIrpef * 0.6)}</span>
               <span>{fiscal.irpefAcconto2Paid ? <span className="badge badge-success badge-dot">versato</span> : <span className="badge badge-warning">da pagare</span>}</span>
             </div>
-            {!tax.prevYear.derived && (
-              <PrevYearBase value={fiscal.irpefPrevYear} year={tax.prevYr}
-                onChange={v => onUpdateFiscal && onUpdateFiscal({ ...fiscal, irpefPrevYear: v })} />
-            )}
             <AccontoDelta dovuto={tax.irpefNetta} acconti={tax.accontiIrpef} delta={tax.saldoIrpef} />
           </div>
 
@@ -828,24 +852,12 @@ const TaxCassa = ({ tax, fiscal, studio, onUpdateFiscal }) => {
       <div className="card-header">
         <div>
           <h3>{cassaName}</h3>
-          <div className="subtitle">Contributo soggettivo {fiscal.cassaContribPct}% su reddito netto</div>
+          <div className="subtitle">Contributo soggettivo {tax.aliquote.cassaContribPct}% su reddito netto</div>
         </div>
       </div>
       <div className="card-body">
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          {/* Editable rate */}
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <label style={{ fontSize: 12.5, color: "var(--text-secondary)", flex: 1 }}>Aliquota soggettiva</label>
-            <div className="input-group" style={{ width: 120 }}>
-              <input
-                type="number" step="0.5" min="0" max="50"
-                className="input mono"
-                value={fiscal.cassaContribPct}
-                onChange={e => updateFiscal({ cassaContribPct: +e.target.value })}
-              />
-              <div className="addon">%</div>
-            </div>
-          </div>
+          <RateFromSettings label="Aliquota soggettiva" value={tax.aliquote.cassaContribPct + "%"} />
           {def.note && <div style={{ fontSize: 11.5, color: "var(--text-muted)", fontStyle: "italic" }}>{def.note}</div>}
           <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
             <span style={{ color: "var(--text-secondary)" }}>Reddito netto al lordo cassa</span>
@@ -853,7 +865,7 @@ const TaxCassa = ({ tax, fiscal, studio, onUpdateFiscal }) => {
           </div>
           <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
             <span style={{ color: "var(--text-secondary)" }}>× aliquota soggettiva</span>
-            <span className="mono">{fiscal.cassaContribPct}%</span>
+            <span className="mono">{tax.aliquote.cassaContribPct}%</span>
           </div>
           <div style={{ display: "flex", justifyContent: "space-between", padding: "12px 0", borderTop: "1px solid var(--border)", borderBottom: "1px solid var(--border)", fontWeight: 700, fontSize: 15 }}>
             <span>Contributo soggettivo annuo</span>
@@ -884,10 +896,6 @@ const TaxCassa = ({ tax, fiscal, studio, onUpdateFiscal }) => {
                 {fiscal.cassaAcconto2Paid ? "✓ Versato" : "Da versare"}
               </button>
             </div>
-            {!tax.prevYear.derived && (
-              <PrevYearBase value={fiscal.cassaPrevYear} year={tax.prevYr}
-                onChange={v => updateFiscal({ cassaPrevYear: v })} />
-            )}
             <AccontoDelta dovuto={tax.contribCassa} acconti={tax.accontiCassa} delta={tax.saldoCassa} />
           </div>
         </div>
@@ -918,7 +926,7 @@ const TaxCassa = ({ tax, fiscal, studio, onUpdateFiscal }) => {
         <div className="card-header"><h3>Aliquota unica</h3></div>
         <div className="card-body">
           <div style={{ fontSize: 12.5, color: "var(--text-secondary)", lineHeight: 1.6 }}>
-            La Gestione Separata INPS prevede un'aliquota unica ({fiscal.cassaContribPct}%) senza contributo integrativo separato. L'intero contributo è a carico del professionista.
+            La Gestione Separata INPS prevede un'aliquota unica ({tax.aliquote.cassaContribPct}%) senza contributo integrativo separato. L'intero contributo è a carico del professionista.
           </div>
         </div>
       </div>
@@ -951,15 +959,8 @@ const TaxIRAP = ({ tax, fiscal, fiscalYear, onUpdateFiscal }) => (
             <span style={{ color: "var(--text-secondary)" }}>= Base imponibile IRAP</span>
             <span className="mono">{fmtEUR(tax.irapBase)}</span>
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, paddingTop: 8, borderTop: "1px solid var(--border)" }}>
-            <label style={{ fontSize: 12.5, color: "var(--text-secondary)", flex: 1 }}>Aliquota IRAP</label>
-            <div className="input-group" style={{ width: 120 }}>
-              <input type="number" step="0.1" min="0" max="10" className="input mono"
-                value={fiscal.irapPct || 3.9}
-                onChange={e => onUpdateFiscal && onUpdateFiscal({ ...fiscal, irapPct: +e.target.value })}
-              />
-              <div className="addon">%</div>
-            </div>
+          <div style={{ paddingTop: 8, borderTop: "1px solid var(--border)" }}>
+            <RateFromSettings label="Aliquota IRAP" value={tax.aliquote.irapPct + "%"} />
           </div>
           <div style={{ display: "flex", justifyContent: "space-between", padding: "12px 0", borderTop: "1px solid var(--border)", borderBottom: "1px solid var(--border)", fontWeight: 700, fontSize: 15 }}>
             <span>IRAP stimata</span>

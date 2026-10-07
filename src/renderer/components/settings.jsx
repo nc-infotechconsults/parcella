@@ -385,13 +385,212 @@ const CategoryRulesTab = ({ categories, invoices, expenses, onSaveCategories }) 
   );
 };
 
-const Settings = ({ user, onSave, onResetData, categories, invoices, expenses, onSaveCategories }) => {
+// ===== Aliquote e contributi =====
+// Le aliquote sono configurazione, non un dato della schermata che le usa:
+// prima vivevano dentro Tasse & contributi, dove si modificavano per sbaglio
+// mentre si leggeva un consuntivo, e le addizionali non si potevano cambiare
+// affatto — restavano ferme sui valori con cui il profilo era nato.
+const PctField = ({ label, hint, value, fallback, step, max, unit, onChange }) => (
+  <div className="field">
+    <label>{label}</label>
+    <div className="input-group" style={{ width: 160 }}>
+      <input
+        className="input mono" type="number"
+        step={step || "0.01"} min="0" max={max == null ? 100 : max}
+        value={value == null ? "" : value}
+        placeholder={fallback == null ? "" : String(fallback)}
+        onChange={e => onChange(e.target.value === "" ? null : Math.max(0, Number(e.target.value) || 0))} />
+      <div className="addon">{unit || "%"}</div>
+    </div>
+    {hint && <div className="hint">{hint}</div>}
+  </div>
+);
+
+const CASSA_SOGGETTIVA = {
+  "Inarcassa": 14.5,
+  "Cassa Forense": 14.5,
+  "Cassa Geometri": 12,
+  "ENPAP": 10,
+  "ENPACL": 12,
+  "Gestione Separata INPS": 26.07,
+};
+
+const FiscalRatesCard = ({ fisc, studio, onChange }) => {
+  const tipo = studio.tipoSoggetto || "professionista";
+  const cassaName = studio.cassaName || "Inarcassa";
+  const isGS = cassaName === "Gestione Separata INPS";
+  const suggerita = CASSA_SOGGETTIVA[cassaName];
+  const brackets = fisc.irpefBrackets && fisc.irpefBrackets.length
+    ? fisc.irpefBrackets
+    : [{ upTo: 28000, rate: 23 }, { upTo: 50000, rate: 35 }, { upTo: null, rate: 43 }];
+
+  const setBracket = (i, patch) => onChange({
+    irpefBrackets: brackets.map((b, j) => (j === i ? { ...b, ...patch } : b)),
+  });
+  const addBracket = () => {
+    const next = brackets.slice();
+    const last = next[next.length - 1];
+    // Lo scaglione finale non ha tetto: il nuovo si inserisce prima di quello.
+    next.splice(next.length - 1, 0, { upTo: (last.upTo || next[next.length - 2]?.upTo || 50000) + 10000, rate: last.rate });
+    onChange({ irpefBrackets: next });
+  };
+  const removeBracket = (i) => onChange({ irpefBrackets: brackets.filter((_, j) => j !== i) });
+
+  // Un tetto deve stare sopra quello che lo precede, altrimenti lo scaglione è
+  // vuoto e l'imposta viene calcolata su una fascia che non esiste.
+  const bracketErrors = brackets.map((b, i) => {
+    if (i === brackets.length - 1) return b.upTo != null ? "L'ultimo scaglione non ha tetto" : null;
+    if (b.upTo == null) return "Indica il tetto dello scaglione";
+    const prev = i > 0 ? brackets[i - 1].upTo : 0;
+    return prev != null && b.upTo <= prev ? "Il tetto deve superare lo scaglione precedente" : null;
+  });
+
+  return (
+    <div className="card">
+      <div className="card-header">
+        <div>
+          <h3>Aliquote e contributi</h3>
+          <div className="subtitle">Alimentano Tasse &amp; contributi, F24 e previsioni</div>
+        </div>
+      </div>
+      <div className="card-body">
+        <div className="form-grid" style={{ gridTemplateColumns: "1fr 1fr" }}>
+          {(tipo === "professionista" || tipo === "societa") && (
+            <PctField
+              label={`Aliquota contributiva soggettiva — ${cassaName}`}
+              hint={suggerita ? `Aliquota ordinaria ${String(suggerita).replace(".", ",")}%` : null}
+              value={fisc.cassaContribPct} fallback={suggerita || 14.5} step="0.01" max={50}
+              onChange={v => onChange({ cassaContribPct: v })} />
+          )}
+          {tipo === "professionista" && (
+            <PctField
+              label="Acconto contributi, % dell'anno precedente"
+              hint={isGS
+                ? "Gestione Separata: 80% in due rate uguali. Vuoto = 80%."
+                : "Casse private: in genere 100% in due rate. Vuoto = 100%."}
+              value={fisc.cassaAccontoPct} fallback={isGS ? 80 : 100} step="1" max={100}
+              onChange={v => onChange({ cassaAccontoPct: v })} />
+          )}
+          {tipo === "ditta_individuale" && (
+            <>
+              <PctField
+                label="INPS — minimale annuo" unit="€" step="0.01" max={100000}
+                value={fisc.inpsMinimale} fallback={4427}
+                onChange={v => onChange({ inpsMinimale: v })} />
+              <PctField
+                label="INPS — aliquota sul reddito eccedente" step="0.01" max={50}
+                value={fisc.inpsPctVariabile} fallback={24}
+                onChange={v => onChange({ inpsPctVariabile: v })} />
+              <PctField
+                label="Aliquota IRAP"
+                hint="Solo con autonoma organizzazione" step="0.1" max={10}
+                value={fisc.irapPct} fallback={3.9}
+                onChange={v => onChange({ irapPct: v })} />
+            </>
+          )}
+          <PctField
+            label="Addizionale regionale IRPEF"
+            hint="Dipende dalla tua regione di residenza" step="0.01" max={5}
+            value={fisc.addRegPct} fallback={0}
+            onChange={v => onChange({ addRegPct: v })} />
+          <PctField
+            label="Addizionale comunale IRPEF"
+            hint="Dipende dal tuo comune di residenza" step="0.01" max={5}
+            value={fisc.addComPct} fallback={0}
+            onChange={v => onChange({ addComPct: v })} />
+        </div>
+
+        <div style={{ marginTop: 24, paddingTop: 20, borderTop: "1px solid var(--border)" }}>
+          <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 4 }}>Scaglioni IRPEF</div>
+          <div className="hint" style={{ marginBottom: 10 }}>
+            Cambiano per legge: aggiornali quando cambiano, senza aspettare un rilascio dell'app.
+          </div>
+          <table className="data">
+            <thead>
+              <tr>
+                <th>Fino a</th>
+                <th style={{ width: 120 }}>Aliquota</th>
+                <th style={{ width: 44 }}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {brackets.map((b, i) => (
+                <tr key={i}>
+                  <td>
+                    {i === brackets.length - 1 ? (
+                      <span style={{ color: "var(--text-secondary)" }}>oltre lo scaglione precedente</span>
+                    ) : (
+                      <div className="input-group" style={{ width: 160 }}>
+                        <div className="addon">€</div>
+                        <input className="input mono" type="number" step="500" min="0"
+                          value={b.upTo == null ? "" : b.upTo}
+                          onChange={e => setBracket(i, { upTo: e.target.value === "" ? null : Math.max(0, Number(e.target.value) || 0) })} />
+                      </div>
+                    )}
+                    {bracketErrors[i] && (
+                      <div style={{ color: "var(--danger)", fontSize: 11.5, marginTop: 4 }}>{bracketErrors[i]}</div>
+                    )}
+                  </td>
+                  <td>
+                    <div className="input-group" style={{ width: 100 }}>
+                      <input className="input mono" type="number" step="0.1" min="0" max="100"
+                        value={b.rate == null ? "" : b.rate}
+                        onChange={e => setBracket(i, { rate: Math.max(0, Number(e.target.value) || 0) })} />
+                      <div className="addon">%</div>
+                    </div>
+                  </td>
+                  <td>
+                    {brackets.length > 1 && (
+                      <button className="btn btn-sm btn-ghost" title="Rimuovi scaglione"
+                        onClick={() => removeBracket(i)}>
+                        <Icon name="trash" size={13} />
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <button className="btn btn-sm" style={{ marginTop: 10 }} onClick={addBracket}>
+            <Icon name="plus" size={13} /> Aggiungi scaglione
+          </button>
+        </div>
+
+        <div style={{ marginTop: 24, paddingTop: 20, borderTop: "1px solid var(--border)" }}>
+          <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 4 }}>Base per gli acconti</div>
+          <div className="hint" style={{ marginBottom: 10 }}>
+            Serve solo finché l'archivio non contiene le fatture dell'anno precedente: da quel
+            momento la base viene calcolata da quelle e questi valori restano inutilizzati.
+          </div>
+          <div className="form-grid" style={{ gridTemplateColumns: "1fr 1fr" }}>
+            <PctField label="IRPEF netta dell'anno precedente" unit="€" step="0.01" max={10000000}
+              value={fisc.irpefPrevYear} fallback={0}
+              onChange={v => onChange({ irpefPrevYear: v })} />
+            <PctField label="Contributi dell'anno precedente" unit="€" step="0.01" max={10000000}
+              value={fisc.cassaPrevYear} fallback={0}
+              onChange={v => onChange({ cassaPrevYear: v })} />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const Settings = ({ user, onSave, onResetData, categories, invoices, expenses, onSaveCategories, fiscal, onSaveFiscal }) => {
   const [data, setData] = useState(user);
   const [tab, setTab] = useState("profile");
   const update = (patch) => setData(d => ({ ...d, ...patch }));
 
+  // Only the CHANGED fiscal keys are held, never a copy of the whole object:
+  // the Tasse screen writes to the same record (F24 history, acconti versati),
+  // and saving a snapshot taken when this screen opened would roll those back.
+  const [fiscPatch, setFiscPatch] = useState({});
+  const fisc = { ...(fiscal || {}), ...fiscPatch };
+  const updateFisc = (patch) => setFiscPatch(p => ({ ...p, ...patch }));
+
   const handleSave = () => {
     onSave(data);
+    if (onSaveFiscal && Object.keys(fiscPatch).length) onSaveFiscal({ ...(fiscal || {}), ...fiscPatch });
     window.showToast && window.showToast(t('set.saved'), 'success');
   };
 
@@ -505,6 +704,8 @@ const Settings = ({ user, onSave, onResetData, categories, invoices, expenses, o
               </div>
             </div>
           </div>
+
+          <FiscalRatesCard fisc={fisc} studio={data} onChange={updateFisc} />
 
           <div className="card">
             <div className="card-header"><h3>Coordinate bancarie</h3></div>
@@ -685,7 +886,7 @@ const Settings = ({ user, onSave, onResetData, categories, invoices, expenses, o
 
       {tab !== "data" && (
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, alignItems: "center", marginTop: 20 }}>
-          <button className="btn" onClick={() => setData(user)}>{t('action.cancel')}</button>
+          <button className="btn" onClick={() => { setData(user); setFiscPatch({}); }}>{t('action.cancel')}</button>
           <button className="btn btn-primary" onClick={handleSave}>
             <Icon name="check" size={14} /> {t('set.save')}
           </button>
