@@ -142,9 +142,11 @@ function computeTaxes(activities, expenses, fiscal, year, clients, studio, invoi
   if (ivaQ4 > 0) generatedF24.push({ id: "_q4", date: `${y+1}-03-16`, code: "6031", desc: `IVA 4° trim ${yr}`, amount: Math.round((ivaQ4 * 1.01) * 100) / 100, _generated: true });
 
   if (tipo === "professionista") {
-    // Saldo IRPEF anno precedente + 1° acconto corrente: 30 giugno
-    const saldoIrpef = Math.max(0, (fiscal.irpefPrevYear || 0) - (fiscal.irpefPrevYear || 0) * 0.4 - (fiscal.irpefPrevYear || 0) * 0.6);
-    generatedF24.push({ id: "_irpef_saldo", date: `${y}-06-30`, code: "4001", desc: `Saldo IRPEF ${y-1}`, amount: saldoIrpef, _generated: true });
+    // No generated row for the previous year's balance: it is last year's
+    // declaration minus the instalments actually paid then, which this screen
+    // does not know. It belongs in the recorded history, where the user enters
+    // what the commercialista computed. The old formula here was
+    // prev - 0.4*prev - 0.6*prev, which is identically zero.
     generatedF24.push({ id: "_irpef_acc1", date: `${y}-06-30`, code: "4033", desc: `1° acconto IRPEF ${yr} (40%)`, amount: Math.round(irpefNetta * 0.4 * 100) / 100, _generated: true });
     generatedF24.push({ id: "_irpef_acc2", date: `${y}-11-30`, code: "4034", desc: `2° acconto IRPEF ${yr} (60%)`, amount: Math.round(irpefNetta * 0.6 * 100) / 100, _generated: true });
     // Cassa professionale acconti (stesso calendario IRPEF per Inarcassa)
@@ -171,12 +173,27 @@ function computeTaxes(activities, expenses, fiscal, year, clients, studio, invoi
     }
   }
 
-  // Merge: voci manuali utente sovrascrivono quelle generate con stesso id
-  const manualIds = new Set((fiscal.f24History || []).map(f => f.id));
+  // A deadline is identified by WHEN it falls and WHICH tributo it pays, not by
+  // an internal id: generated ids are "_q1", recorded ones are "f1", so keying
+  // the merge on id could never match and every deadline was listed twice —
+  // once as an estimate and once as the real entry, with the totals adding both.
+  // What the user recorded wins; the estimate only fills a gap.
+  const recorded = fiscal.f24History || [];
+  const key = f => f.date + "|" + f.code;
+  // A FACT beats a computation: an entry the user marked paid or scheduled is
+  // what happened, and the estimate for that deadline is dropped. A recorded
+  // row still marked "estimated" is not a fact, so the computed figure — which
+  // now comes from the real invoices — supersedes it. Otherwise a stale saved
+  // estimate of 0,00 would hide a liability the invoices clearly show.
+  const settledKeys = new Set(recorded.filter(f => f.status === 'paid' || f.status === 'scheduled').map(key));
+  const generated = generatedF24.filter(g => g.amount > 0 && !settledKeys.has(key(g)));
+  const generatedKeys = new Set(generated.map(key));
   const f24All = [
-    ...generatedF24.filter(g => !manualIds.has(g.id)),
-    ...(fiscal.f24History || []),
-  ].map(f => ({ ...f, status: f.status || (f._generated ? "estimated" : "estimated") }))
+    // An instalment of nothing is not a deadline. The IVA rows were already
+    // guarded this way; the IRPEF and cassa rows were not.
+    ...generated,
+    ...recorded.filter(f => !generatedKeys.has(key(f))),
+  ].map(f => ({ ...f, status: f.status || "estimated" }))
    .sort((a, b) => a.date.localeCompare(b.date));
 
   const totaleAnnoBase = (ivaDebito - ivaCredito) + irpefNetta + contribCassa;
