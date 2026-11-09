@@ -60,6 +60,62 @@
     return issued || today;
   }
 
+  // ── Voci F24 registrate a mano ─────────────────────────────────────────────
+  // Una riga F24 è l'unico modo in cui un versamento vero entra nei calcoli:
+  // contributiPagatiIn() somma per codice tributo, stato "paid" e anno della
+  // data, e il merge del calendario identifica una scadenza con data+codice.
+  // Una riga scritta male non dà errore, semplicemente non somma e non filtra:
+  // la validazione sta qui, dove nessuna schermata può aggirarla.
+  const F24_STATUSES = ['paid', 'scheduled', 'estimated'];
+
+  function upsertF24Entry(history, entry) {
+    const list = Array.isArray(history) ? history : [];
+    const e = entry || {};
+    const date = String(e.date || '');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error('f24: data non valida (attesa AAAA-MM-GG)');
+    const code = String(e.code || '').trim();
+    if (!code) throw new Error('f24: codice tributo mancante');
+    const amount = typeof e.amount === 'number' ? e.amount : Number(String(e.amount).replace(',', '.'));
+    if (!isFinite(amount) || amount < 0) throw new Error('f24: importo non valido');
+
+    // Una scadenza è la coppia data+codice: due righe sullo stesso tributo
+    // nello stesso giorno si sommerebbero due volte nella deduzione per cassa.
+    const byId = e.id ? list.findIndex(f => f.id === e.id) : -1;
+    const idx = byId >= 0 ? byId : list.findIndex(f => f.date === date && String(f.code) === code);
+    // Gli id calcolati cominciano con "_": una voce dell'utente che ne imitasse
+    // uno verrebbe scambiata per una stima e riscritta al ricalcolo.
+    const keep = idx >= 0 ? list[idx].id : null;
+    let id = (keep && !String(keep).startsWith('_')) ? keep : `f24_${date}_${code}`;
+    // L'id si conia da data e codice, ma la data si modifica: una voce spostata
+    // si porta dietro l'id vecchio, e una voce nuova su quella data ne conierebbe
+    // uno identico. Due righe con lo stesso id si cancellano insieme e si
+    // modificano l'una per l'altra, quindi qui l'id nuovo deve essere libero.
+    if (idx < 0) {
+      const taken = new Set(list.map(f => f.id));
+      let n = 2;
+      while (taken.has(id)) id = `f24_${date}_${code}_${n++}`;
+    }
+
+    const next = {
+      ...(idx >= 0 ? list[idx] : {}),
+      id,
+      date,
+      code,
+      desc: String(e.desc || '').trim(),
+      amount: Math.round(amount * 100) / 100,
+      status: F24_STATUSES.includes(e.status) ? e.status : 'scheduled',
+    };
+    if (e.paidDate) next.paidDate = String(e.paidDate);
+    delete next._generated;                   // una voce registrata è un fatto, non una stima
+
+    const out = idx >= 0 ? list.map((f, i) => (i === idx ? next : f)) : [...list, next];
+    return out.slice().sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  }
+
+  function removeF24Entry(history, id) {
+    return (Array.isArray(history) ? history : []).filter(f => f.id !== id);
+  }
+
   // ── Invoice-backed costs ───────────────────────────────────────────────────
   // Un documento è un cespite solo se tutte e tre le condizioni valgono. Sta
   // qui, e non nella sola proposta d'import, perché la casella si può spuntare
@@ -348,6 +404,7 @@
   return {
     round2, CATEGORY_RULES, AMORTIZE_THRESHOLD, exceedsAmortizeThreshold, isCespite,
     computeExpenseFiscals, invoiceCostFiscals, settlementDateFor,
+    upsertF24Entry, removeF24Entry,
     amortSchedule, buildAmortSchedule, buildExpenseAmortSchedule,
     amortQuotaFor, amortResidualAt,
     computeFiscalYear,

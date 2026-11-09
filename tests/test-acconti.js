@@ -107,3 +107,36 @@ test('an acconto the user recorded himself still wins over the computation', () 
   near(giu[0].amount, 5000);
   assert.equal(giu[0].status, 'scheduled');
 });
+
+// Un 2025 fatto di sole fatture passive bastava a far scattare la derivazione:
+// la base veniva calcolata da un anno senza compensi, dava zero, e scavalcava
+// in silenzio il valore scritto in Impostazioni. Da lì rate a zero, e spuntare
+// "Versato" non deduceva niente perché la rata da dedurre valeva zero.
+const prevPassive = (over = {}) => ({
+  id: 'pp1', direction: 'passive', reverseCharge: false, sign: 1, tipoDoc: 'TD01',
+  date: '2025-03-10', monthKey: '2025-03', clientId: null, linkedMonthKey: null,
+  totals: { imponibile: 200, imposta: 44, documento: 244 },
+  vatSummary: [{ vatPct: 22, imponibile: 200, imposta: 44 }],
+  withholding: null, cassa: null, payment: null, counterparty: { name: 'Fornitore' },
+  fiscal: { category: 'Altro', deductPct: 100, vatDetractPct: 100, amortize: false },
+  settlement: { status: 'settled', date: '2025-03-10', amount: 244 },
+  ...over,
+});
+
+test('un anno precedente di soli costi non è una base: resta il valore memorizzato', () => {
+  const tax = run({}, [active(), prevPassive()]);
+  near(tax.accontiCassa, 6800 * 0.8);
+  near(tax.accontiIrpef, 28400);
+});
+
+test('senza ricavi l\'anno prima, spuntare Versato deduce comunque la rata', () => {
+  const tax = run({ cassaAcconto1Paid: true }, [active(), prevPassive()]);
+  near(tax.contributiVersati, 6800 * 0.8 / 2);
+});
+
+test('un solo documento attivo dell\'anno prima basta invece a fare testo', () => {
+  const tax = run({ cassaPrevYear: 99999 }, [active(), prevPassive(), prevYear()]);
+  assert.ok(tax.accontiCassa < 99999 * 0.8, 'i documenti veri restano la base migliore');
+  // 40.000 di compensi meno i 200 di costo del documento passivo, al 26,07%.
+  near(tax.prevYear.contribCassa, (40000 - 200) * 0.2607);
+});

@@ -167,9 +167,14 @@ function computeTaxes(activities, expenses, fiscal, year, clients, studio, invoi
   // Where last year's documents are in the archive the base is computed from
   // them; the stored figure is only the fallback for a first year of use.
   const prevYr = Number(yr) - 1;
-  const hasPrevData =
-    (invoices || []).some(i => String(i.date || "").startsWith(prevYr + "-"))
-    || expenses.some(e => String(e.monthKey || "").startsWith(prevYr + "-"));
+  // Un anno di soli costi non è un anno di cui si conoscano i compensi. La
+  // condizione guardava qualunque documento: ventidue fatture passive del 2025
+  // bastavano a far derivare la base da un anno senza ricavi, che dava zero e
+  // scavalcava in silenzio il valore scritto in Impostazioni. Da lì acconti e
+  // rate a zero, e la casella "Versato" che non deduceva nulla perché la rata
+  // da dedurre valeva zero. La prova che serve è un ricavo, non un documento.
+  const hasPrevData = (invoices || []).some(i =>
+    i.direction === "active" && !i.reverseCharge && String(i.date || "").startsWith(prevYr + "-"));
   const fyPrev = hasPrevData ? window.computeFiscalYear({
     year: prevYr, invoices: invoices || [], activities, expenses, clients: _clients, fiscal,
     computeInvoiceAmounts: window.computeInvoiceAmounts,
@@ -1092,9 +1097,45 @@ const TaxF24 = ({ fiscal, tax, fiscalYear, onUpdateFiscal }) => {
     // If it's a generated entry (_generated), move it into fiscal.f24History as confirmed paid
     const existing = allF24.find(f => f.id === id);
     if (!existing) return;
-    const confirmedEntry = { ...existing, status: "paid", paidDate: now, _generated: false };
-    const manualHistory = (fiscal.f24History || []).filter(f => f.id !== id);
-    onUpdateFiscal({ ...fiscal, f24History: [...manualHistory, confirmedEntry] });
+    // Passa da upsertF24Entry come ogni altra scrittura: normalizza l'id (una
+    // voce calcolata ne porta uno che comincia con "_") e toglie _generated.
+    onUpdateFiscal({
+      ...fiscal,
+      f24History: window.upsertF24Entry(fiscal.f24History || [], { ...existing, status: "paid", paidDate: now }),
+    });
+  };
+
+  // ── Voci registrate a mano ───────────────────────────────────────────────
+  // Senza questo l'unico gesto possibile era spuntare "Versato" su una riga
+  // già presente, con l'importo che aveva: un versamento vero che il calcolo
+  // non prevede — una rata INPS quando la base dell'anno prima è vuota — non
+  // aveva modo di entrare, e restava fuori dalla deduzione per cassa.
+  const emptyDraft = { id: null, date: `${fiscalYear}-06-30`, code: "3801", desc: "", amount: "", status: "paid" };
+  const [draft, setDraft] = useState(emptyDraft);
+  const [draftError, setDraftError] = useState("");
+  const isManual = f => !f._generated && (fiscal.f24History || []).some(h => h.id === f.id);
+
+  const saveDraft = () => {
+    if (!onUpdateFiscal) return;
+    try {
+      const next = window.upsertF24Entry(fiscal.f24History || [], draft);
+      onUpdateFiscal({ ...fiscal, f24History: next });
+      setDraft(emptyDraft);
+      setDraftError("");
+    } catch (e) {
+      setDraftError(e.message.replace(/^f24: /, ""));
+    }
+  };
+
+  const editEntry = (f) => {
+    setDraftError("");
+    setDraft({ id: f.id, date: f.date, code: f.code, desc: f.desc || "", amount: f.amount, status: f.status });
+  };
+
+  const deleteEntry = (id) => {
+    if (!onUpdateFiscal) return;
+    onUpdateFiscal({ ...fiscal, f24History: window.removeF24Entry(fiscal.f24History || [], id) });
+    if (draft.id === id) setDraft(emptyDraft);
   };
 
   return (
@@ -1142,6 +1183,64 @@ const TaxF24 = ({ fiscal, tax, fiscalYear, onUpdateFiscal }) => {
           })}
         </div>
 
+        {onUpdateFiscal && (
+          <div style={{ padding: "12px 14px", background: "var(--bg-sunken)", borderRadius: 6, marginBottom: 16 }}>
+            <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 4 }}>
+              {draft.id ? "Modifica la voce" : "Registra un versamento o una scadenza"}
+            </div>
+            <div className="hint" style={{ marginBottom: 10 }}>
+              Solo le voci marcate <strong>Versato</strong> con codice 3801 o 0601 si deducono dal
+              reddito, e nell'anno della data che indichi qui.
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end" }}>
+              <label style={{ display: "grid", gap: 4, fontSize: 12 }}>Data
+                <input className="input mono" type="date" style={{ width: 150 }}
+                  value={draft.date} onChange={e => setDraft({ ...draft, date: e.target.value })} />
+              </label>
+              <label style={{ display: "grid", gap: 4, fontSize: 12 }}>Codice tributo
+                <input className="input mono" list="f24-codici" style={{ width: 110 }} placeholder="3801"
+                  value={draft.code} onChange={e => setDraft({ ...draft, code: e.target.value })} />
+              </label>
+              <datalist id="f24-codici">
+                <option value="3801">Contributi cassa / Gestione Separata</option>
+                <option value="0601">Contributi INPS artigiani e commercianti</option>
+                <option value="4001">Saldo IRPEF</option>
+                <option value="4033">1° acconto IRPEF</option>
+                <option value="4034">2° acconto IRPEF</option>
+                <option value="6031">IVA trimestrale</option>
+                <option value="3800">IRAP</option>
+              </datalist>
+              <label style={{ display: "grid", gap: 4, fontSize: 12, flex: "1 1 220px" }}>Descrizione
+                <input className="input" placeholder="1° acconto contributi 2026"
+                  value={draft.desc} onChange={e => setDraft({ ...draft, desc: e.target.value })} />
+              </label>
+              <label style={{ display: "grid", gap: 4, fontSize: 12 }}>Importo €
+                <input className="input mono num" style={{ width: 120 }} inputMode="decimal" placeholder="0,00"
+                  value={draft.amount} onChange={e => setDraft({ ...draft, amount: e.target.value })} />
+              </label>
+              <label style={{ display: "grid", gap: 4, fontSize: 12 }}>Stato
+                <select className="select" style={{ width: 150 }}
+                  value={draft.status} onChange={e => setDraft({ ...draft, status: e.target.value })}>
+                  <option value="paid">Versato</option>
+                  <option value="scheduled">Programmato</option>
+                  <option value="estimated">Da quantificare</option>
+                </select>
+              </label>
+              <button className="btn btn-primary btn-sm" onClick={saveDraft}>
+                {draft.id ? "Salva" : "Aggiungi"}
+              </button>
+              {draft.id && (
+                <button className="btn btn-sm" onClick={() => { setDraft(emptyDraft); setDraftError(""); }}>
+                  Annulla
+                </button>
+              )}
+            </div>
+            {draftError && (
+              <div style={{ marginTop: 8, color: "var(--danger)", fontSize: 12 }}>{draftError}</div>
+            )}
+          </div>
+        )}
+
         <table className="data">
           <thead>
             <tr>
@@ -1170,6 +1269,14 @@ const TaxF24 = ({ fiscal, tax, fiscalYear, onUpdateFiscal }) => {
                     <button className="btn btn-sm" onClick={() => markPaid(f.id)}>
                       ✓ Versato
                     </button>
+                  )}
+                  {/* Solo le voci registrate si modificano: una stima la
+                      riscrive il calcolo al prossimo ricalcolo. */}
+                  {isManual(f) && onUpdateFiscal && (
+                    <React.Fragment>
+                      <button className="btn btn-sm" title="Modifica" onClick={() => editEntry(f)}>✎</button>
+                      <button className="btn btn-sm btn-danger" title="Elimina" onClick={() => deleteEntry(f.id)}>✕</button>
+                    </React.Fragment>
                   )}
                 </td>
               </tr>
