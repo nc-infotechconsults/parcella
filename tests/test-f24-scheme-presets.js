@@ -172,3 +172,11 @@ test('LEGACY_CODES ricorda i codici che usava il generatore di prima', () => {
   assert.equal(s.LEGACY_CODES['inpsFisso/r3'], '0601');
   assert.equal(s.LEGACY_CODES['irap/acc2'], '3800');
 });
+
+test('la ditta commerciante versa con CF e CP', () => {
+  const ditta = s.activeScheme({}, { tipoSoggetto: 'ditta_individuale', tipoInps: 'commerciante' }).scheme;
+  assert.ok(trib(ditta, 'inpsFisso').righe.every(r => r.code === 'CF'));
+  assert.ok(trib(ditta, 'inpsEccedente').righe.every(r => r.code === 'CP'));
+  const artigiano = s.activeScheme({}, { tipoSoggetto: 'ditta_individuale' }).scheme;
+  assert.ok(trib(artigiano, 'inpsFisso').righe.every(r => r.code === 'AF'));
+});

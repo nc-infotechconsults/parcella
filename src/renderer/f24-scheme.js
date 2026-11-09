@@ -63,7 +63,8 @@
       // delle casse private hanno codici propri, o si pagano con pagoPA.
       const codeOptional = t.kind === 'contributo' && t.sezione === 'altri-enti';
       const checkDated = (q, r) => {
-        if (!isMonthDay(r.date)) err(`${q}.date`, `data "${r.date}" non valida (attesa MM-GG)`);
+        // Il messaggio non cita il formato interno (MM-GG): l'editor mostra gg/mm.
+        if (!isMonthDay(r.date)) err(`${q}.date`, 'data non valida: giorno e mese di una data che esiste ogni anno');
         if (r.yearOffset !== 0 && r.yearOffset !== 1) err(`${q}.yearOffset`, 'anno: 0 (stesso) o 1 (successivo)');
         if (!codeOptional && !String(r.code == null ? '' : r.code).trim()) err(`${q}.code`, 'codice mancante');
       };
@@ -183,8 +184,10 @@
     },
   ];
 
-  function presetScheme(id, fiscal) {
+  function presetScheme(id, fiscal, studio) {
     const f = fiscal || {};
+    // Artigiano (AF/AP) o commerciante (CF/CP): lo dice studio.tipoInps.
+    const comm = !!(studio && studio.tipoInps === 'commerciante');
     const tributi = [];
     if (id === 'professionista-gs' || id === 'professionista-cassa') {
       const gs = id === 'professionista-gs';
@@ -204,7 +207,7 @@
       });
     } else if (id === 'ditta') {
       const fissa = (n, date, yearOffset) => ({
-        id: `r${n}`, quota: 'corrente', share: 25, date, yearOffset, code: 'AF', label: `INPS ${n}ª rata fissa {anno}`,
+        id: `r${n}`, quota: 'corrente', share: 25, date, yearOffset, code: comm ? 'CF' : 'AF', label: `INPS ${n}ª rata fissa {anno}`,
       });
       tributi.push(...irpefTributi(f), {
         id: 'inpsFisso', label: 'INPS minimale', kind: 'contributo', base: 'contribFisso', sezione: 'inps',
@@ -214,9 +217,9 @@
         id: 'inpsEccedente', label: 'INPS eccedente il minimale', kind: 'contributo', base: 'contribVar', sezione: 'inps',
         acconti: { metodo: 'storico', pct: 100, fallbackPrevYear: 0, soglia: 0 },
         righe: [
-          acconto('acc1', 50, '06-30', 'AP', '1° acconto INPS eccedente {anno}'),
-          acconto('acc2', 50, '11-30', 'AP', '2° acconto INPS eccedente {anno}'),
-          saldo('AP', 'Saldo INPS eccedente {anno}'),
+          acconto('acc1', 50, '06-30', comm ? 'CP' : 'AP', '1° acconto INPS eccedente {anno}'),
+          acconto('acc2', 50, '11-30', comm ? 'CP' : 'AP', '2° acconto INPS eccedente {anno}'),
+          saldo(comm ? 'CP' : 'AP', 'Saldo INPS eccedente {anno}'),
         ],
       }, {
         id: 'irap', label: 'IRAP', kind: 'imposta', base: 'irap', sezione: 'regioni',
@@ -236,7 +239,7 @@
 
   function activeScheme(fiscal, studio) {
     const f = fiscal || {};
-    const preset = () => presetScheme(presetIdFor(studio), f);
+    const preset = () => presetScheme(presetIdFor(studio), f, studio);
     if (!f.scadenzario) return { scheme: preset(), source: 'preset', warning: null };
     const res = validateScheme(f.scadenzario);
     if (res.ok) return { scheme: f.scadenzario, source: 'saved', warning: null };
