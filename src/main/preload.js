@@ -22,6 +22,12 @@ contextBridge.exposeInMainWorld('api', {
     exportJSON:     ()           => ipcRenderer.invoke('db:exportJSON'),
     importJSON:     (json)       => ipcRenderer.invoke('db:importJSON', json),
   },
+  invoices: {
+    chooseSource: ()       => ipcRenderer.invoke('invoices:chooseSource'),
+    scan:         (paths)  => ipcRenderer.invoke('invoices:scan', { paths }),
+    commit:       (payload)=> ipcRenderer.invoke('invoices:commit', payload),
+    openOriginal: (p)      => ipcRenderer.invoke('invoices:openOriginal', p),
+  },
   backup: {
     chooseExportPath:   (filename) => ipcRenderer.invoke('backup:chooseExportPath', filename),
     exportTo:           (filePath) => ipcRenderer.invoke('backup:exportTo', filePath),

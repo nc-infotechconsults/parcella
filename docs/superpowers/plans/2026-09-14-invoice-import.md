@@ -14,7 +14,7 @@
 
 - **P1 — Imported data is immutable.** Every XML-derived field is read-only forever. Re-importing the same document never rewrites it. Only `clientId`, `linkedMonthKey`, `fiscal`, `settlement`, `notes`, `reviewedAt` are editable.
 - **P2 — Nothing is applied without confirmation.** Scan is a dry run; no DB write, no file copy, until the user confirms the manifest.
-- **P3 — Reverse charge is one document.** TD16–TD19 are always `direction: "passive"`, `reverseCharge: true`; imponibile is a cost and never revenue; imposta counts as debito *and* credito in the same period.
+- **P3 — Reverse charge is one document.** TD16–TD19 are always `direction: "passive"`, `reverseCharge: true`; imponibile is a cost and never revenue; imposta counts as debito *and* credito in the same period. The sides cancel at full detraction; where `vatDetractPct < 100` the non-detraibile share correctly remains owed.
 - **P4 — Two dates.** IVA is placed by `date` (document date). Ricavi/costi for IRPEF are placed by `settlement.date` (cassa).
 - **No double counting.** A timesheet (client, month) pair contributes to the forecast only when no active invoice is linked to it.
 - Money helper everywhere: `Math.round(n * 100) / 100`. Never compare floats for equality in tests without a tolerance.
@@ -163,7 +163,7 @@ Create `tests/fixtures/attiva-td01-ritenuta-cassa.xml`:
 Create `tests/fixtures/passiva-td01-multirate.xml` — note the two `DatiRiepilogo` blocks (one N2.2 fuori campo, one at 22%), which is the case that must not be collapsed:
 
 ```xml
-<?xml version="1.0" encoding="UTF-8" standalone="yes"?><ns3:FatturaElettronica xmlns:ns3="http://ivaservizi.agenziaentrate.gov.it/docs/xsd/fatture/v1.2" versione="FPR12"><FatturaElettronicaHeader><DatiTrasmissione><IdTrasmittente><IdPaese>IT</IdPaese><IdCodice>05550001112</IdCodice></IdTrasmittente><ProgressivoInvio>3626224</ProgressivoInvio><FormatoTrasmissione>FPR12</FormatoTrasmissione><CodiceDestinatario>J6URRTW</CodiceDestinatario></DatiTrasmissione><CedentePrestatore><DatiAnagrafici><IdFiscaleIVA><IdPaese>IT</IdPaese><IdCodice>05550001112</IdCodice></IdFiscaleIVA><Anagrafica><Denominazione>Sosta Facile Italia Srl</Denominazione></Anagrafica><RegimeFiscale>RF01</RegimeFiscale></DatiAnagrafici><Sede><Indirizzo>Via Larga 15</Indirizzo><CAP>20122</CAP><Comune>Milano</Comune><Provincia>MI</Provincia><Nazione>IT</Nazione></Sede></CedentePrestatore><CessionarioCommittente><DatiAnagrafici><IdFiscaleIVA><IdPaese>IT</IdPaese><IdCodice>01234567890</IdCodice></IdFiscaleIVA><Anagrafica><Denominazione>STUDIO DI PROVA DI MARIO ROSSI</Denominazione></Anagrafica></DatiAnagrafici><Sede><Indirizzo>VIA DELLE PROVE 1</Indirizzo><CAP>00100</CAP><Comune>ROMA</Comune><Nazione>IT</Nazione></Sede></CessionarioCommittente></FatturaElettronicaHeader><FatturaElettronicaBody><DatiGenerali><DatiGeneraliDocumento><TipoDocumento>TD01</TipoDocumento><Divisa>EUR</Divisa><Data>2026-08-31</Data><Numero>B_000558442 / 2026</Numero><ImportoTotaleDocumento>8.62</ImportoTotaleDocumento><Arrotondamento>0.00</Arrotondamento></DatiGeneraliDocumento></DatiGenerali><DatiBeniServizi><DettaglioLinee><NumeroLinea>1</NumeroLinea><Descrizione>Totale soste (IVA 22.00)</Descrizione><Quantita>1.00</Quantita><DataInizioPeriodo>2026-08-12</DataInizioPeriodo><DataFinePeriodo>2026-08-12</DataFinePeriodo><PrezzoUnitario>1.91</PrezzoUnitario><PrezzoTotale>1.91</PrezzoTotale><AliquotaIVA>0.00</AliquotaIVA><Natura>N2.2</Natura></DettaglioLinee><DettaglioLinee><NumeroLinea>2</NumeroLinea><Descrizione>Canone abbonamento (IVA 22.00)</Descrizione><Quantita>1.00</Quantita><DataInizioPeriodo>2026-08-01</DataInizioPeriodo><DataFinePeriodo>2026-08-31</DataFinePeriodo><PrezzoUnitario>5.50</PrezzoUnitario><PrezzoTotale>5.50</PrezzoTotale><AliquotaIVA>22.00</AliquotaIVA></DettaglioLinee><DatiRiepilogo><AliquotaIVA>0.00</AliquotaIVA><Natura>N2.2</Natura><ImponibileImporto>1.91</ImponibileImporto><Imposta>0.00</Imposta><EsigibilitaIVA>I</EsigibilitaIVA><RiferimentoNormativo>Art 74 c.1 e 2 Operazioni fuori campo IVA</RiferimentoNormativo></DatiRiepilogo><DatiRiepilogo><AliquotaIVA>22.00</AliquotaIVA><ImponibileImporto>5.50</ImponibileImporto><Imposta>1.21</Imposta><EsigibilitaIVA>I</EsigibilitaIVA></DatiRiepilogo></DatiBeniServizi></FatturaElettronicaBody></ns3:FatturaElettronica>
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?><ns3:FatturaElettronica xmlns:ns3="http://ivaservizi.agenziaentrate.gov.it/docs/xsd/fatture/v1.2" versione="FPR12"><FatturaElettronicaHeader><DatiTrasmissione><IdTrasmittente><IdPaese>IT</IdPaese><IdCodice>05550001112</IdCodice></IdTrasmittente><ProgressivoInvio>111111</ProgressivoInvio><FormatoTrasmissione>FPR12</FormatoTrasmissione><CodiceDestinatario>0000000</CodiceDestinatario></DatiTrasmissione><CedentePrestatore><DatiAnagrafici><IdFiscaleIVA><IdPaese>IT</IdPaese><IdCodice>05550001112</IdCodice></IdFiscaleIVA><Anagrafica><Denominazione>PARCHEGGI DI PROVA SRL</Denominazione></Anagrafica><RegimeFiscale>RF01</RegimeFiscale></DatiAnagrafici><Sede><Indirizzo>VIA ESEMPIO 10</Indirizzo><CAP>00100</CAP><Comune>ROMA</Comune><Provincia>RM</Provincia><Nazione>IT</Nazione></Sede></CedentePrestatore><CessionarioCommittente><DatiAnagrafici><IdFiscaleIVA><IdPaese>IT</IdPaese><IdCodice>01234567890</IdCodice></IdFiscaleIVA><Anagrafica><Denominazione>STUDIO DI PROVA DI MARIO ROSSI</Denominazione></Anagrafica></DatiAnagrafici><Sede><Indirizzo>VIA DELLE PROVE 1</Indirizzo><CAP>00100</CAP><Comune>ROMA</Comune><Nazione>IT</Nazione></Sede></CessionarioCommittente></FatturaElettronicaHeader><FatturaElettronicaBody><DatiGenerali><DatiGeneraliDocumento><TipoDocumento>TD01</TipoDocumento><Divisa>EUR</Divisa><Data>2026-08-31</Data><Numero>B_000000001 / 2026</Numero><ImportoTotaleDocumento>8.62</ImportoTotaleDocumento><Arrotondamento>0.00</Arrotondamento></DatiGeneraliDocumento></DatiGenerali><DatiBeniServizi><DettaglioLinee><NumeroLinea>1</NumeroLinea><Descrizione>Totale soste (IVA 22.00)</Descrizione><Quantita>1.00</Quantita><DataInizioPeriodo>2026-08-12</DataInizioPeriodo><DataFinePeriodo>2026-08-12</DataFinePeriodo><PrezzoUnitario>1.91</PrezzoUnitario><PrezzoTotale>1.91</PrezzoTotale><AliquotaIVA>0.00</AliquotaIVA><Natura>N2.2</Natura></DettaglioLinee><DettaglioLinee><NumeroLinea>2</NumeroLinea><Descrizione>Canone abbonamento (IVA 22.00)</Descrizione><Quantita>1.00</Quantita><DataInizioPeriodo>2026-08-01</DataInizioPeriodo><DataFinePeriodo>2026-08-31</DataFinePeriodo><PrezzoUnitario>5.50</PrezzoUnitario><PrezzoTotale>5.50</PrezzoTotale><AliquotaIVA>22.00</AliquotaIVA></DettaglioLinee><DatiRiepilogo><AliquotaIVA>0.00</AliquotaIVA><Natura>N2.2</Natura><ImponibileImporto>1.91</ImponibileImporto><Imposta>0.00</Imposta><EsigibilitaIVA>I</EsigibilitaIVA><RiferimentoNormativo>Art 74 c.1 e 2 Operazioni fuori campo IVA</RiferimentoNormativo></DatiRiepilogo><DatiRiepilogo><AliquotaIVA>22.00</AliquotaIVA><ImponibileImporto>5.50</ImponibileImporto><Imposta>1.21</Imposta><EsigibilitaIVA>I</EsigibilitaIVA></DatiRiepilogo></DatiBeniServizi></FatturaElettronicaBody></ns3:FatturaElettronica>
 ```
 
 - [ ] **Step 5: Create the signed TD18 self-invoice fixture**
@@ -265,6 +265,10 @@ const assert = require('node:assert/strict');
 const { parseFattura } = require('../src/main/fattura-parse');
 const fixtures = require('./fixtures');
 
+// Money comparisons go through a tolerance: every amount here is the result of
+// a round-to-2dp, and bare float equality on those is a latent flake.
+const near = (a, b, tol = 0.011) => assert.ok(Math.abs(a - b) < tol, `${a} != ${b}`);
+
 test('parses a TD01 with ritenuta and cassa', () => {
   const [doc] = parseFattura(fixtures.read('attiva-td01-ritenuta-cassa.xml'));
   assert.equal(doc.tipoDoc, 'TD01');
@@ -274,16 +278,16 @@ test('parses a TD01 with ritenuta and cassa', () => {
   assert.equal(doc.sign, 1);
   assert.equal(doc.cedente.vat, '01234567890');
   assert.equal(doc.cessionario.name, 'CLIENTE ALFA S.R.L.');
-  assert.equal(doc.totals.imponibile, 6240);
-  assert.equal(doc.totals.imposta, 1372.80);
-  assert.equal(doc.totals.documento, 7612.80);
-  assert.equal(doc.withholding.importo, 1248);
-  assert.equal(doc.withholding.aliquota, 20);
-  assert.equal(doc.cassa.importo, 240);
-  assert.equal(doc.cassa.imponibile, 6000);
+  near(doc.totals.imponibile, 6240);
+  near(doc.totals.imposta, 1372.80);
+  near(doc.totals.documento, 7612.80);
+  near(doc.withholding.importo, 1248);
+  near(doc.withholding.aliquota, 20);
+  near(doc.cassa.importo, 240);
+  near(doc.cassa.imponibile, 6000);
   assert.equal(doc.payment.dueDate, '2026-08-30');
   assert.equal(doc.lines.length, 1);
-  assert.equal(doc.lines[0].total, 6000);
+  near(doc.lines[0].total, 6000);
 });
 
 test('keeps one vatSummary entry per rate', () => {
@@ -291,18 +295,18 @@ test('keeps one vatSummary entry per rate', () => {
   assert.equal(doc.vatSummary.length, 2);
   const fuoriCampo = doc.vatSummary.find(v => v.natura === 'N2.2');
   const ordinaria = doc.vatSummary.find(v => v.vatPct === 22);
-  assert.equal(fuoriCampo.imponibile, 1.91);
-  assert.equal(fuoriCampo.imposta, 0);
-  assert.equal(ordinaria.imposta, 1.21);
-  assert.equal(doc.totals.imponibile, 7.41);
-  assert.equal(doc.totals.imposta, 1.21);
+  near(fuoriCampo.imponibile, 1.91);
+  near(fuoriCampo.imposta, 0);
+  near(ordinaria.imposta, 1.21);
+  near(doc.totals.imponibile, 7.41);
+  near(doc.totals.imposta, 1.21);
 });
 
 test('ignores the ds:Signature subtree of a signed document', () => {
   const [doc] = parseFattura(fixtures.read('autofattura-td18-signed.xml'));
   assert.equal(doc.tipoDoc, 'TD18');
   assert.equal(doc.cedente.name, 'FORNITORE ESTERO LIMITED');
-  assert.equal(doc.totals.imposta, 39.60);
+  near(doc.totals.imposta, 39.60);
   assert.equal(doc.lines.length, 1);
   assert.equal(doc.lines[0].qty, null);   // no Quantita in the XML
 });
@@ -532,7 +536,7 @@ test('invoice issued by the studio is active', () => {
 test('invoice received by the studio is passive', () => {
   const c = classify(load('passiva-td01-multirate.xml'), STUDIO);
   assert.equal(c.direction, 'passive');
-  assert.equal(c.counterparty.name, 'Sosta Facile Italia Srl');
+  assert.equal(c.counterparty.name, 'PARCHEGGI DI PROVA SRL');
 });
 
 test('TD18 is passive with reverseCharge even though the studio transmitted it', () => {
@@ -554,6 +558,22 @@ test('a document involving neither party is flagged for review', () => {
   const c = classify(doc, ['99999999999']);
   assert.equal(c.needsReview, true);
   assert.match(c.reviewReason, /nessuna delle parti/i);
+});
+
+test('a reverse-charge document belonging to nobody we know is still flagged', () => {
+  const c = classify(load('autofattura-td18-signed.xml'), ['99999999999']);
+  assert.equal(c.direction, 'passive');
+  assert.equal(c.reverseCharge, true);
+  assert.equal(c.needsReview, true);
+  assert.match(c.reviewReason, /nessuna delle parti/i);
+});
+
+test('a document with the studio on both sides is flagged', () => {
+  const doc = load('attiva-td01-ritenuta-cassa.xml');
+  doc.cessionario = { ...doc.cessionario, vat: fixtures.STUDIO.piva, cf: fixtures.STUDIO.cf };
+  const c = classify(doc, STUDIO);
+  assert.equal(c.needsReview, true);
+  assert.match(c.reviewReason, /sia cedente sia cessionario/i);
 });
 
 test('classify requires the studio identity', () => {
@@ -625,7 +645,16 @@ function classify(doc, studioIds) {
   let reviewReason = null;
 
   if (rule && rule.forcePassive) {
+    // Self-invoices record a purchase even though the studio issues them, so
+    // TipoDocumento wins over party matching. The studio must still appear
+    // SOMEWHERE on the document: if it appears nowhere, the file belongs to
+    // someone else and is not ours to book. "Both parties" is deliberately not
+    // flagged here — TD21 (splafonamento) legitimately has exactly that shape.
     direction = 'passive';
+    if (!studioIsCedente && !studioIsCessionario) {
+      needsReview = true;
+      reviewReason = 'Lo studio non è nessuna delle parti del documento';
+    }
   } else if (studioIsCedente && !studioIsCessionario) {
     direction = 'active';
   } else if (studioIsCessionario && !studioIsCedente) {
@@ -641,7 +670,10 @@ function classify(doc, studioIds) {
 
   if (!rule) {
     needsReview = true;
-    reviewReason = `TipoDocumento ${doc.tipoDoc || '(assente)'} non riconosciuto`;
+    // Append rather than overwrite: a document can be both unrecognised AND
+    // unrelated to the studio, and the reviewer needs to see both reasons.
+    reviewReason = [reviewReason, `TipoDocumento ${doc.tipoDoc || '(assente)'} non riconosciuto`]
+      .filter(Boolean).join('; ');
   }
 
   return {
@@ -667,7 +699,7 @@ module.exports = { TIPO_DOC, normalizeId, classify, dedupKey };
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `node --test tests/test-fattura-classify.js`
-Expected: PASS — 8 tests.
+Expected: PASS — 21 tests.
 
 Note: `normalizeId('IE1111111AA')` returns `IE1111111AA` unchanged (the `IT` rule only applies to Italian 11-digit VAT numbers), which is why the expected dedup key starts with `IE`.
 
@@ -823,6 +855,24 @@ test('rejects a p7m with no XML content', () => {
 test('rejects a malformed zip', () => {
   assert.throws(() => readZip(Buffer.from('not a zip at all', 'utf-8')), /ZIP non valido/);
 });
+
+test('a structurally valid zip with a corrupt local-header offset is rejected', () => {
+  // The dangerous case: EOCD and central directory both look right, so the
+  // reader gets far enough to dereference an offset that points nowhere.
+  const zip = buildZip([{ name: 'a.xml', data: Buffer.from('<?xml version="1.0"?><x/>', 'utf-8') }]);
+  const eocd = zip.length - 22;
+  const cdStart = zip.readUInt32LE(eocd + 16);
+  zip.writeUInt32LE(0xfffffff0, cdStart + 42);
+  assert.throws(() => readZip(zip), /ZIP non valido/);
+});
+
+test('a leading BOM is normalized away whatever the container', () => {
+  const xml = '\uFEFF' + fixtures.read('passiva-td04-nota-credito.xml');
+  const plain = unwrap('a.xml', Buffer.from(xml, 'utf-8'))[0].xml;
+  const signed = unwrap('a.xml.p7m', buildP7M(xml))[0].xml;
+  assert.equal(plain.charCodeAt(0), 0x3c);   // '<', not U+FEFF
+  assert.equal(plain, signed);               // identical bytes => identical dedup hash
+});
 ```
 
 - [ ] **Step 2: Run the test to verify it fails**
@@ -897,7 +947,12 @@ function extractP7M(buffer) {
     }
   }
   const xml = findXmlInDER(buf);
-  if (xml) return xml.slice(0, xml.lastIndexOf('>') + 1);
+  // findXmlInDER already returns exactly the DER-delimited OCTET STRING payload
+  // starting at '<?xml' — no further trimming. Cutting at the last '>' would
+  // drop a trailing newline that is genuine file content, and Task 6 hashes
+  // this string as a dedup guard: the same document arriving once as .xml and
+  // once as .xml.p7m must hash identically.
+  if (xml) return xml;
   throw new Error('Contenuto XML non trovato nel file .p7m');
 }
 
@@ -928,9 +983,15 @@ function readZip(buffer) {
     const localOffset = buf.readUInt32LE(pos + 42);
     const name = buf.subarray(pos + 46, pos + 46 + nameLen).toString('utf-8');
 
+    // localOffset and compSize come from the archive itself: untrusted. Without
+    // these guards a corrupt offset reaches readUInt16LE as a raw RangeError and
+    // a corrupt size reaches zlib, so the caller sees a Node internal message
+    // instead of the archive error this module promises.
+    if (localOffset + 30 > buf.length) throw new Error('Archivio ZIP non valido');
     const localNameLen = buf.readUInt16LE(localOffset + 26);
     const localExtraLen = buf.readUInt16LE(localOffset + 28);
     const dataStart = localOffset + 30 + localNameLen + localExtraLen;
+    if (dataStart + compSize > buf.length) throw new Error('Archivio ZIP non valido');
     const raw = buf.subarray(dataStart, dataStart + compSize);
 
     if (!name.endsWith('/')) {
@@ -945,19 +1006,24 @@ function readZip(buffer) {
 
 const isXmlName = n => /\.xml$/i.test(n);
 
+// Normalize here, at the one place every container converges: a BOM breaks the
+// XML parser, and leaving it on only the plain-.xml path would make the same
+// document hash two different ways depending on how it arrived.
+const stripBOM = s => (s.charCodeAt(0) === 0xFEFF ? s.slice(1) : s);
+
 function unwrap(fileName, buffer) {
   const lower = String(fileName).toLowerCase();
   if (lower.endsWith('.p7m')) {
-    return [{ name: fileName.replace(/\.p7m$/i, ''), xml: extractP7M(buffer) }];
+    return [{ name: fileName.replace(/\.p7m$/i, ''), xml: stripBOM(extractP7M(buffer)) }];
   }
   if (lower.endsWith('.zip')) {
     return readZip(buffer)
       .filter(e => isXmlName(e.name) || /\.xml\.p7m$/i.test(e.name))
       .map(e => (/\.p7m$/i.test(e.name)
-        ? { name: e.name.replace(/\.p7m$/i, ''), xml: extractP7M(e.data) }
-        : { name: e.name, xml: e.data.toString('utf-8') }));
+        ? { name: e.name.replace(/\.p7m$/i, ''), xml: stripBOM(extractP7M(e.data)) }
+        : { name: e.name, xml: stripBOM(e.data.toString('utf-8')) }));
   }
-  return [{ name: fileName, xml: Buffer.isBuffer(buffer) ? buffer.toString('utf-8') : String(buffer) }];
+  return [{ name: fileName, xml: stripBOM(Buffer.isBuffer(buffer) ? buffer.toString('utf-8') : String(buffer)) }];
 }
 
 module.exports = { unwrap, extractP7M, readZip };
@@ -966,7 +1032,7 @@ module.exports = { unwrap, extractP7M, readZip };
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `node --test tests/test-fattura-unwrap.js`
-Expected: PASS — 7 tests.
+Expected: PASS — 9 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -1005,6 +1071,8 @@ const path = require('path');
 const fs = require('fs');
 const AppDB = require('../src/main/db');
 
+const near = (a, b, tol = 0.011) => assert.ok(Math.abs(a - b) < tol, `${a} != ${b}`);
+
 let seq = 0;
 function makeTempDB() {
   const p = path.join(os.tmpdir(), `parcella-inv-${Date.now()}-${seq++}.db`);
@@ -1036,7 +1104,7 @@ test('saveCollection persists invoices and loadAll returns them', () => {
     const { invoices } = db.loadAll();
     assert.equal(invoices.length, 1);
     assert.equal(invoices[0].dedupKey, 'IE1111111AA|TD18|28/AU|2026-08-24');
-    assert.equal(invoices[0].totals.imposta, 39.6);
+    near(invoices[0].totals.imposta, 39.6);
   } finally { cleanup(); }
 });
 
@@ -1128,7 +1196,9 @@ and after the existing indexes add:
 In `loadAll()`, after the `expenses` line add:
 
 ```js
-    const invoices   = this.db.prepare('SELECT data FROM invoices ORDER BY date(json_extract(data,"$.date")), rowid').all().map(r => JSON.parse(r.data));
+    // Single quotes around the JSON path are required: SQLite 3.53 treats a
+    // double-quoted token as an identifier, so "$.date" raises "no such column".
+    const invoices   = this.db.prepare("SELECT data FROM invoices ORDER BY date(json_extract(data,'$.date')), rowid").all().map(r => JSON.parse(r.data));
 ```
 
 and add `supplierRules` next to the other kv reads:
@@ -1274,24 +1344,35 @@ Create `src/shared/categories.js`:
 
   const AMORTIZE_THRESHOLD = 516.46;
 
-  // ORDER IS THE POLICY: first match wins, so concrete/physical categories are
-  // listed before generic ones. A parking invoice reading "Totale soste" and
-  // "Canone abbonamento" must land on Auto, not on Software.
+  // ORDER IS THE POLICY: first match wins, so concrete categories precede
+  // generic ones. A parking invoice reading "Totale soste" and "Canone
+  // abbonamento" must land on Auto, not Software; a line reading "corso" is
+  // training whatever its subject, so Formazione precedes Software.
+  //
+  // Each entry has two halves: STEMS take \w* so Italian inflections match
+  // ("carburant" -> carburante, "pedagg" -> pedaggio/pedaggi), while genuinely
+  // ambiguous short tokens stay whole words so they cannot swallow longer ones
+  // ("monitor" must not match "monitoraggio", "sim" must not match
+  // "simulazione", "volo" must not match "volontariato"). A trailing \b after a
+  // stem is the bug this shape exists to prevent: it silently blocks every
+  // inflected form, dropping real invoices into Altro at 100% deducibilita.
   const KEYWORDS = [
-    [/\b(carburant|benzina|gasolio|pedaggi|autostrad|sosta|parcheggi|noleggio auto|revisione|pneumatic)\b/i, "Auto"],
-    [/\b(notebook|laptop|macbook|monitor|server|stampante|hardware|pc |computer|iphone|ipad|alimentatore)\b/i, "Hardware"],
-    [/\b(abbonament|licen[zc]|subscription|saas|cloud|software|hosting|dominio|github|microsoft|adobe|figma)\b/i, "Software"],
-    [/\b(corso|formazione|training|webinar|master|certificazione)\b/i, "Formazione"],
-    [/\b(telefon|mobile|sim|fibra|adsl|connettivit)\b/i, "Telefonia"],
-    [/\b(energia|elettric|gas|acqua|utenz|bolletta|enel|luce)\b/i, "Utenze"],
-    [/\b(commission|spese bancarie|bollo c\/c|canone conto)\b/i, "Commissioni bancarie"],
-    [/\b(consulen|notaio|commercialista|avvocato|perizia)\b/i, "Consulenze"],
-    [/\b(hotel|albergo|pernottament|b&b)\b/i, "Pernottamento"],
-    [/\b(ristorant|pranzo|cena|bar |catering)\b/i, "Pasti"],
-    [/\b(treno|trenitalia|italo|volo|aereo|taxi|trasfert|biglietto)\b/i, "Trasferta"],
-    [/\b(cancelleri|toner|carta|ufficio)\b/i, "Cancelleria"],
-    [/\b(polizza|assicurazion|rc professionale)\b/i, "Assicurazioni"],
-    [/\b(imposta di bollo|marca da bollo|diritti camerali)\b/i, "Bolli/Tasse"],
+    [/\b(?:carburant|benzina|gasolio|pedagg|autostrad|sost[ae]|parchegg|pneumatic|revision)\w*|\b(?:noleggio auto|gasolio)\b/i, "Auto"],
+    [/\b(?:notebook|laptop|macbook|stampant|hardware|computer|iphone|ipad|alimentator)\w*|\b(?:monitor|server|pc)\b/i, "Hardware"],
+    [/\b(?:corso|corsi|formazion|training|webinar|certificazion)\w*/i, "Formazione"],
+    [/\b(?:abbonament|licen[zc]|subscription|software|hosting|dominio|github|microsoft|adobe|figma)\w*|\b(?:saas|cloud)\b/i, "Software"],
+    [/\b(?:telefon|fibra|connettivit)\w*|\b(?:mobile|sim|adsl)\b/i, "Telefonia"],
+    // 'acqua' alone is not a utility signal — bottled water is a beverage
+  // purchase, so utility matching keys on idric/acquedott instead.
+  [/\b(?:energia|elettric|utenz|bolletta|bollette|idric|acquedott)\w*|\b(?:gas|enel|luce)\b/i, "Utenze"],
+    [/\b(?:commission)\w*|\b(?:spese bancarie|bollo c\/c|canone conto)\b/i, "Commissioni bancarie"],
+    [/\b(?:consulen|notai|commercialist|avvocat|perizi)\w*/i, "Consulenze"],
+    [/\b(?:albergh|pernottament)\w*|\b(?:hotel|albergo|b&b)\b/i, "Pernottamento"],
+    [/\b(?:ristorant|catering)\w*|\b(?:pranzo|pranzi|cena|cene|bar|menu|menù|coperto)\b/i, "Pasti"],
+    [/\b(?:trasfert|bigliett|trenitalia)\w*|\b(?:treno|treni|italo|volo|voli|aereo|taxi)\b/i, "Trasferta"],
+    [/\b(?:cancelleri|toner)\w*|\b(?:carta|ufficio)\b/i, "Cancelleria"],
+    [/\b(?:polizz|assicurazion)\w*|\brc professionale\b/i, "Assicurazioni"],
+    [/\b(?:imposta di bollo|marca da bollo|diritti camerali)\b/i, "Bolli/Tasse"],
   ];
 
   function guessCategory(text) {
@@ -1315,6 +1396,8 @@ const assert = require('node:assert/strict');
 const { buildManifest, finalizeRecords } = require('../src/main/invoice-import');
 const fixtures = require('./fixtures');
 
+const near = (a, b, tol = 0.011) => assert.ok(Math.abs(a - b) < tol, `${a} != ${b}`);
+
 const STUDIO = [fixtures.STUDIO.piva, fixtures.STUDIO.cf];
 
 const file = name => ({ sourcePath: `/tmp/${name}`, name, buffer: Buffer.from(fixtures.read(name), 'utf-8') });
@@ -1337,7 +1420,7 @@ test('an active invoice proposes the matching client and its month', () => {
   assert.equal(it.status, 'new');
   assert.equal(it.proposal.clientId, 'c1');
   assert.equal(it.proposal.linkedMonthKey, '2026-07');
-  assert.equal(it.proposal.settlement.amount, 7612.80);
+  near(it.proposal.settlement.amount, 7612.80);
 });
 
 test('a passive invoice proposes a category from its lines', () => {
@@ -1397,6 +1480,17 @@ test('a cespite above the threshold is proposed with amortization', () => {
   assert.equal(hw.items[0].proposal.fiscal.firstYearHalf, true);
 });
 
+test('a credit note is never proposed as a cespite', () => {
+  const xml = fixtures.read('passiva-td04-nota-credito.xml')
+    .replace('Storno canone noleggio', 'Storno MacBook Pro notebook')
+    .replace('<ImponibileImporto>65.58</ImponibileImporto>', '<ImponibileImporto>2400.00</ImponibileImporto>');
+  const m = buildManifest(base({
+    files: [{ sourcePath: '/tmp/nc.xml', name: 'nc.xml', buffer: Buffer.from(xml, 'utf-8') }],
+  }));
+  assert.equal(m.items[0].proposal.fiscal.category, 'Hardware');
+  assert.equal(m.items[0].proposal.fiscal.amortize, false);   // a return is not an acquisition
+});
+
 test('unreadable files are skipped with a reason, not fatal', () => {
   const m = buildManifest(base({
     files: [
@@ -1438,6 +1532,79 @@ test('a TD04 record keeps sign -1 so it subtracts downstream', () => {
   });
   assert.equal(records[0].sign, -1);
   assert.equal(records[0].tipoDoc, 'TD04');
+});
+
+test('category inference handles Italian inflections without over-matching', () => {
+  const { guessCategory } = require('../src/shared/categories');
+  const expected = [
+    ['Canone abbonamento mensile', 'Software'], ['Licenza software annuale', 'Software'],
+    ['Servizio di telefonia mobile', 'Telefonia'], ['Fornitura energia elettrica', 'Utenze'],
+    ['Utenze idriche', 'Utenze'], ['Commissioni bancarie trimestrali', 'Commissioni bancarie'],
+    ['Consulenza fiscale', 'Consulenze'], ['Carburante per autovettura', 'Auto'],
+    ['Pedaggio autostradale', 'Auto'], ['Parcheggio aeroporto', 'Auto'],
+    ['Sostituzione pneumatici', 'Auto'], ['Totale soste (IVA 22.00)', 'Auto'],
+    ['Pernottamento hotel Roma', 'Pernottamento'], ['Cena di lavoro ristorante', 'Pasti'],
+    ['Trasferta Milano', 'Trasferta'], ['Cancelleria varia', 'Cancelleria'],
+    ['Assicurazione RC professionale', 'Assicurazioni'], ['MacBook Pro 14 notebook', 'Hardware'],
+    ['Corso di formazione cloud', 'Formazione'], ['Marca da bollo', 'Bolli/Tasse'],
+  ];
+  for (const [desc, want] of expected) assert.equal(guessCategory(desc), want, desc);
+
+  // Near-misses: these must NOT be captured by the stem they resemble, because
+  // each would propose a wrong deducibilita on a real document.
+  const forbidden = [
+    ["Ritenuta sostituto d'imposta", 'Auto'], ['Servizio di monitoraggio infrastruttura', 'Hardware'],
+    ['Simulazione finanziaria', 'Telefonia'], ['Attivita di volontariato aziendale', 'Trasferta'],
+    ['Prodotti gastronomici', 'Utenze'], ['Mastercard commissioni', 'Formazione'],
+  ];
+  for (const [desc, wrong] of forbidden) assert.notEqual(guessCategory(desc), wrong, desc);
+});
+
+test('proposals match how the user\'s real invoices actually read', () => {
+  const { guessCategory } = require('../src/shared/categories');
+  // Line text taken verbatim from real Agenzia delle Entrate exports.
+  assert.equal(guessCategory('MENU A PREZZO FISSO Tavolo: 93'), 'Pasti');          // 75%, not 100%
+  assert.equal(guessCategory('acqua santo stefano 1\\2 lt x 24 bt pet'), 'Altro'); // a drink, not a water bill
+  assert.equal(guessCategory('Virtual Machines Bsv2 Series'), 'Altro');            // no signal in the line...
+  assert.equal(guessCategory('Microsoft Srl'), 'Software');                        // ...but the supplier has one
+  assert.equal(guessCategory('INTEGRAZIONE FATTURA N. 9BF DEL 21/08/2026'), 'Altro');
+  assert.equal(guessCategory('GITHUB INC'), 'Software');
+});
+
+test('safeArchiveName contains every path-traversal attempt', () => {
+  const path = require('path');
+  const { safeArchiveName } = require('../src/main/invoice-import');
+  const dir = path.join('/archive', '2026');
+  const attacks = [
+    '../../../../../../Users/x/.zshrc',
+    '..\\..\\..\\Windows\\System32\\evil.xml',
+    'sub/dir/fattura.xml',
+    '....//....//etc/passwd',
+    '',
+    null,
+  ];
+  for (const a of attacks) {
+    const dest = path.join(dir, 'deadbeef_' + safeArchiveName(a));
+    assert.ok(dest.startsWith(dir + path.sep), `escaped the archive dir: ${a}`);
+  }
+  // Containment alone cannot police the backslash normalization: on POSIX a
+  // backslash payload never traverses anyway, so the assertion above passes
+  // with or without the guard. Assert the OUTPUT, which differs — without the
+  // normalization basename returns the whole string, since it splits only on
+  // '/'. This is what fails if a future edit drops the .replace().
+  assert.equal(safeArchiveName('..\\..\\..\\Windows\\System32\\evil.xml'), 'evil.xml');
+
+  // Real Agenzia delle Entrate filenames must survive untouched.
+  assert.equal(safeArchiveName('IT04204200135_0JILg.xml'), 'IT04204200135_0JILg.xml');
+  assert.equal(safeArchiveName('COPIA_IT04204200135_0KDbm.xml'), 'COPIA_IT04204200135_0KDbm.xml');
+});
+
+test('archiveYear falls back rather than naming a folder from undefined', () => {
+  const { archiveYear } = require('../src/main/invoice-import');
+  assert.equal(archiveYear('2026-08-31'), '2026');
+  assert.equal(archiveYear(undefined), 'senza-data');
+  assert.equal(archiveYear(''), 'senza-data');
+  assert.equal(archiveYear('not-a-date'), 'senza-data');
 });
 
 test('buildManifest refuses to run without the studio identity', () => {
@@ -1508,12 +1675,20 @@ function proposeFiscal(doc, counterparty, supplierRules) {
       firstYearHalf: remembered.firstYearHalf !== false,
     };
   }
-  // Deliberately excludes counterparty.name: a trade name is an unreliable
-  // signal, and per-supplier treatment is already covered by supplierRules.
+  // Lines first: a description is direct evidence of what was bought, and it
+  // keeps the guess independent of a supplier's trade name. The name is a
+  // fallback only, for documents whose lines carry no signal by construction —
+  // a reverse-charge integration reads "INTEGRAZIONE FATTURA N. x DEL y", where
+  // the supplier is the only evidence there is.
   const text = [doc.causale, ...doc.lines.map(l => l.desc)].join(' ');
-  const category = guessCategory(text);
+  const fromLines = guessCategory(text);
+  const category = fromLines !== 'Altro' ? fromLines : guessCategory(counterparty.name || '');
   const rule = CATEGORY_RULES[category] || CATEGORY_RULES.Altro;
-  const amortize = doc.totals.imponibile >= AMORTIZE_THRESHOLD && category === 'Hardware';
+  // A credit note is never a cespite, so never propose one: otherwise the review
+  // panel renders "Ammortizza" pre-checked on a return and invites the user to
+  // confirm a treatment every consumer then has to neutralise.
+  const amortize = (doc.sign || 1) > 0
+    && doc.totals.imponibile >= AMORTIZE_THRESHOLD && category === 'Hardware';
   return {
     category,
     deductPct: rule.deductPct,
@@ -1667,7 +1842,24 @@ function finalizeRecords({ items, decisions, supplierRules }) {
   return { records, supplierRules: rules };
 }
 
-module.exports = { collectFiles, buildManifest, finalizeRecords, proposeFiscal, proposeClient };
+// Archiving guards live here, exported and pure, so they carry regression tests.
+// They are the only thing standing between a crafted .zip entry name and a
+// write outside the archive directory, and an untested guard is one edit from
+// being dropped by accident.
+function safeArchiveName(fileName) {
+  // Normalize backslashes FIRST: POSIX basename does not treat \ as a
+  // separator, and this app ships Windows builds.
+  return path.basename(String(fileName || '').replace(/[\\]+/g, '/')) || 'fattura.xml';
+}
+
+function archiveYear(date) {
+  return /^\d{4}/.test(String(date)) ? String(date).slice(0, 4) : 'senza-data';
+}
+
+module.exports = {
+  collectFiles, buildManifest, finalizeRecords, proposeFiscal, proposeClient,
+  safeArchiveName, archiveYear,
+};
 ```
 
 - [ ] **Step 5: Run the test to verify it passes**
@@ -1703,7 +1895,7 @@ git commit -m "feat: build import manifest with dedup, client and category propo
 At the top of `src/main/main.js`, next to the existing `AppDB` require:
 
 ```js
-const { collectFiles, buildManifest, finalizeRecords } = require('./invoice-import');
+const { collectFiles, buildManifest, finalizeRecords, safeArchiveName, archiveYear } = require('./invoice-import');
 ```
 
 - [ ] **Step 2: Add the handlers**
@@ -1752,10 +1944,15 @@ In `createWindow()`, immediately after the `db:resetDocCounter` handler, insert:
     for (const rec of result.records) {
       const item = items.find(i => i.id === rec.id);
       if (!item || !item.file.sourcePath) continue;
-      const yearDir = path.join(invoiceArchiveDir, String(rec.date).slice(0, 4));
-      fs.mkdirSync(yearDir, { recursive: true });
-      const dest = path.join(yearDir, `${rec.src.sha256.slice(0, 8)}_${rec.src.fileName}`);
       try {
+        // Everything filesystem-related is inside the try, mkdirSync included:
+        // a directory that cannot be created must cost this record its archive
+        // copy, never the whole batch's invoice data.
+        const yearDir = path.join(invoiceArchiveDir, archiveYear(rec.date));
+        fs.mkdirSync(yearDir, { recursive: true });
+        // safeArchiveName keeps a crafted zip-entry name from steering the
+        // write path; it is tested in tests/test-invoice-import.js.
+        const dest = path.join(yearDir, `${rec.src.sha256.slice(0, 8)}_${safeArchiveName(rec.src.fileName)}`);
         if (!fs.existsSync(dest)) fs.copyFileSync(item.file.sourcePath, dest);
         rec.src.archivePath = dest;
       } catch (err) {
@@ -1788,6 +1985,37 @@ In `src/main/preload.js`, inside the `contextBridge.exposeInMainWorld('api', { .
   },
 ```
 
+- [ ] **Step 3b: Bring the JSON fallback to parity**
+
+`main.js` falls back to `src/main/db-json.js` whenever `better-sqlite3` fails to
+load (a native ABI mismatch after an Electron upgrade is the usual cause). That
+fallback predates this feature and knows nothing about invoices — and critically
+it has **no `getKV` method**, so `studioIdentity()` would throw
+`db.getKV is not a function` and the import wizard would fail outright on any
+machine using it. Four small changes give it parity:
+
+```js
+// 1. default shape — so loadAll() returns [] / {} rather than undefined
+    this._data = { clients: [], activities: [], expenses: [], invoices: [], studio: null, fiscal: null, supplierRules: {} };
+
+// 2. the missing reader used by the invoice IPC handlers
+  getKV(key) {
+    return this._data[key] !== undefined ? this._data[key] : null;
+  }
+
+// 3. a database holding only invoices is not a fresh install
+        this._empty = this._data.clients.length === 0
+          && (this._data.invoices || []).length === 0
+          && !this._data.studio;
+
+// 4. stats() reports invoices alongside the other collections
+      invoices:   (this._data.invoices || []).length,
+```
+
+`saveCollection` and `saveKV` are already generic, so invoices and
+`supplierRules` persist through them unchanged; `exportJSON`/`importJSON`
+serialize `_data` wholesale and inherit both automatically.
+
 - [ ] **Step 4: Verify the app still boots**
 
 Run: `npm start`
@@ -1814,7 +2042,7 @@ git commit -m "feat: wire invoice import IPC and original-file archiving"
 - Consumes: `CATEGORY_RULES`, `AMORTIZE_THRESHOLD` from `src/shared/categories.js` (Task 6).
 - Produces (UMD — `require`-able in Node, `window.*` in the renderer):
   - `computeExpenseFiscals(e) => { gross, net, vat, vatDetracted, yearlyDeducted, inAmortization, nonDeductible }` — behaviour identical to today's function.
-  - `invoiceCostFiscals(inv) => { imponibile, imposta, vatDetracted, deductible, inAmortization }` — signed, reverse-charge aware.
+  - `invoiceCostFiscals(inv) => { imponibile, imposta, vatDetracted, deductible, inAmortization }` — signed (TD04 flows through with `sign: -1`). It does NOT branch on `reverseCharge`: a reverse-charge document's COST treatment is identical to any other purchase. The reverse-charge asymmetry is purely a VAT-period concern and lives in `computeFiscalYear`, which routes the same `imposta` to both debito and credito.
   - `buildAmortSchedule(inv) => { id, desc, date, startYear, cost, years, firstYearHalf, quotas: Array<{ year, amount }> }`
   - `amortQuotaFor(schedule, year) => number`, `amortResidualAt(schedule, year) => number`
 
@@ -1903,6 +2131,20 @@ test('buildAmortSchedule without the half rule spreads evenly', () => {
   near(s.quotas[0].amount, 600);
 });
 
+test('buildAmortSchedule refuses to open a schedule for a credit note', () => {
+  // The guard is structural so that a future caller which forgets to filter on
+  // sign cannot reintroduce an inflated deduction.
+  const s = buildAmortSchedule({
+    id: 'inv_nc', sign: -1, date: '2026-05-15', lines: [],
+    totals: { imponibile: 2400 },
+    fiscal: { deductPct: 100, amortize: true, amortYears: 4, firstYearHalf: true },
+  });
+  near(s.cost, 0);
+  near(s.quotas.reduce((t, q) => t + q.amount, 0), 0);
+  near(amortQuotaFor(s, 2026), 0);
+  near(amortResidualAt(s, 2026), 0);
+});
+
 test('amortQuotaFor and amortResidualAt read the schedule', () => {
   const s = buildAmortSchedule({
     id: 'inv_z', date: '2026-05-15', totals: { imponibile: 2400 }, lines: [],
@@ -1976,7 +2218,9 @@ Create `src/renderer/fiscal.js`:
     const sign = inv.sign || 1;
     const imponibile = round2(sign * (inv.totals.imponibile || 0));
     const imposta = round2(sign * (inv.totals.imposta || 0));
-    const inAmortization = !!f.amortize;
+    // A credit note is a return, not an acquisition: it must remove cost now,
+    // never open (or top up) an amortization schedule.
+    const inAmortization = !!f.amortize && sign > 0;
     return {
       imponibile,
       imposta,
@@ -1993,7 +2237,11 @@ Create `src/renderer/fiscal.js`:
   function buildAmortSchedule(inv) {
     const f = inv.fiscal || {};
     const years = Math.max(1, Number(f.amortYears) || 4);
-    const base = round2(Math.abs(inv.totals.imponibile || 0) * pct(f.deductPct) / 100);
+    // Structural guard, not merely a caller convention: a credit note can never
+    // open a schedule. Both callers already filter on sign, but a future one
+    // might not, and the failure mode is a silently inflated deduction.
+    const base = (inv.sign || 1) < 0 ? 0
+      : round2(Math.abs(inv.totals.imponibile || 0) * pct(f.deductPct) / 100);
     const full = base / years;
     const startYear = Number(String(inv.date || '').slice(0, 4));
     const half = f.firstYearHalf !== false;
@@ -2044,7 +2292,7 @@ Create `src/renderer/fiscal.js`:
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `node --test tests/test-fiscal-expense.js`
-Expected: PASS — 9 tests.
+Expected: PASS — 10 tests.
 
 - [ ] **Step 5: Load the new files in the renderer**
 
@@ -2105,7 +2353,8 @@ computeFiscalYear({ year, invoices, activities, expenses, clients, fiscal, compu
                 ivaDebito, ivaCredito, ivaReverse, ivaSaldo },
   previsionale: { ricavi, months: Array<{ clientId, monthKey, imponibile }> },
   coveredMonths: { [`${clientId}|${monthKey}`]: invoiceId },
-  periods: Array<{ id, label, months, ivaDebito, ivaCredito, ivaReverse, saldo }>,
+  periods: Array<{ id, label, months, ivaDebito, ivaCredito, ivaReverse,
+                   creditoPrecedente, saldoLordo, saldo }>,
   cespiti: Array<Schedule & { quotaYear, residual }>,
   costiPerCategoria: { [category]: number },
   scadenze: Array<{ id, date, direction, counterparty, amount }>,
@@ -2305,6 +2554,101 @@ test('open invoices with a due date become scadenze, newest last', () => {
   assert.equal(r.scadenze[0].direction, 'active');
 });
 
+test('a 2025 invoice settled in 2026 is 2026 cash revenue, not 2026 turnover', () => {
+  // The discriminating case for P4: without the two-date split this test and
+  // its twin below cannot both pass.
+  const old = activeInvoice({
+    id: 'inv_old', date: '2025-12-20', monthKey: '2025-12', linkedMonthKey: null,
+    settlement: { status: 'settled', date: '2026-02-10', amount: 7612.80 },
+  });
+  const r = run({ invoices: [old] });
+  near(r.consuntivo.ricavi, 0);              // turnover belongs to 2025
+  near(r.consuntivo.ricaviIncassati, 6240);  // the cash arrived in 2026
+  near(r.consuntivo.ritenutaIncassata, 1248);
+  near(r.consuntivo.ivaDebito, 0);           // VAT followed the 2025 document
+});
+
+test('a 2026 invoice settled in 2027 is 2026 turnover but not 2026 cash', () => {
+  const late = activeInvoice({
+    id: 'inv_late',
+    settlement: { status: 'settled', date: '2027-01-15', amount: 7612.80 },
+  });
+  const r = run({ invoices: [late] });
+  near(r.consuntivo.ricavi, 6240);
+  near(r.consuntivo.ricaviIncassati, 0);
+  near(r.consuntivo.ivaDebito, 1372.80);
+});
+
+test('a 2025 cost paid in 2026 deducts in 2026 but detracts VAT in neither', () => {
+  const old = passiveInvoice({
+    id: 'inv_oldp', date: '2025-11-30', monthKey: '2025-11',
+    settlement: { status: 'settled', date: '2026-01-15', amount: 122 },
+  });
+  const r = run({ invoices: [old] });
+  near(r.consuntivo.costiDeducibili, 100);
+  near(r.consuntivo.costiCompetenza, 0);
+  near(r.consuntivo.ivaCredito, 0);
+});
+
+test('a credit note on a cespite reduces cost instead of creating a schedule', () => {
+  const nc = passiveInvoice({
+    id: 'inv_nc_hw', tipoDoc: 'TD04', sign: -1, date: '2026-05-15',
+    totals: { imponibile: 2400, imposta: 528, documento: 2928 },
+    vatSummary: [{ vatPct: 22, imponibile: 2400, imposta: 528 }],
+    fiscal: { category: 'Hardware', deductPct: 100, vatDetractPct: 100, amortize: true, amortYears: 4, firstYearHalf: true },
+    settlement: { status: 'settled', date: '2026-05-15', amount: 2928 },
+  });
+  const r = run({ invoices: [nc] });
+  assert.equal(r.cespiti.length, 0);          // a return is not an acquisition
+  near(r.consuntivo.costiDeducibili, -2400);  // it removes cost, never adds quota
+  near(r.consuntivo.ivaCredito, -528);
+});
+
+test('manual-expense VAT reaches ivaCredito and its own period', () => {
+  const expenses = [
+    { id: 'e1', monthKey: '2026-03', amount: 1220, vatPct: 22, vatExempt: false, deductPct: 100, billable: false, amortize: false, category: 'Cancelleria' },
+  ];
+  const r = run({ expenses });
+  near(r.consuntivo.ivaCredito, 220);
+  near(r.periods.find(p => p.id === 'Q1').ivaCredito, 220);
+});
+
+test('a quarter ending in credit reduces what the next quarter pays', () => {
+  const bigCost = passiveInvoice({
+    id: 'inv_q1', date: '2026-02-10', monthKey: '2026-02',
+    totals: { imponibile: 5000, imposta: 1100, documento: 6100 },
+    vatSummary: [{ vatPct: 22, imponibile: 5000, imposta: 1100 }],
+    settlement: { status: 'open', date: null, amount: 6100 },
+  });
+  const sale = activeInvoice({
+    id: 'inv_q2', date: '2026-05-31', monthKey: '2026-05', linkedMonthKey: null,
+    totals: { imponibile: 3000, imposta: 660, documento: 3660 },
+    vatSummary: [{ vatPct: 22, imponibile: 3000, imposta: 660 }],
+    withholding: null, cassa: null,
+  });
+  const r = run({ invoices: [bigCost, sale] });
+  const [q1, q2, q3] = r.periods;
+  near(q1.saldoLordo, -1100);
+  near(q1.saldo, 0);               // a credit is never a payment
+  near(q2.creditoPrecedente, 1100);
+  near(q2.saldoLordo, 660);
+  near(q2.saldo, 0);               // absorbed by the carried credit
+  near(q3.creditoPrecedente, 440); // and the remainder keeps travelling
+});
+
+test('an active credit note does not suppress its month forecast', () => {
+  const nc = activeInvoice({
+    id: 'inv_ncA', tipoDoc: 'TD04', sign: -1,
+    totals: { imponibile: 1000, imposta: 220, documento: 1220 },
+    vatSummary: [{ vatPct: 22, imponibile: 1000, imposta: 220 }],
+    withholding: null, cassa: null,
+  });
+  const activities = [{ id: 'a1', clientId: 'c1', monthKey: '2026-07', hours: 50, day: 3 }];
+  const r = run({ invoices: [nc], activities });
+  near(r.previsionale.ricavi, 5000);   // the work still needs invoicing
+  assert.equal(r.coveredMonths['c1|2026-07'], undefined);
+});
+
 test('cash-basis revenue counts only settled invoices', () => {
   const settled = activeInvoice({ id: 'inv_s', settlement: { status: 'settled', date: '2026-09-15', amount: 7612.80 } });
   const r = run({ invoices: [activeInvoice(), settled] });
@@ -2352,6 +2696,7 @@ In `src/renderer/fiscal.js`, add before the final `return { ... }`:
     const settledInYear = inv => inv.settlement && inv.settlement.status === 'settled' && inYear(inv.settlement.date);
 
     const byDocDate = invoices.filter(i => inYear(i.date));
+    const manual = expenses.filter(e => !e.billable && String(e.monthKey || '').startsWith(yr + '-'));
     const active = byDocDate.filter(i => i.direction === 'active' && !i.reverseCharge);
     const passive = byDocDate.filter(i => i.direction === 'passive' && !i.reverseCharge);
     const reverse = byDocDate.filter(i => i.reverseCharge);
@@ -2369,13 +2714,16 @@ In `src/renderer/fiscal.js`, add before the final `return { ... }`:
     const detractedOn = inv => ivaOn(inv) * pct(inv.fiscal && inv.fiscal.vatDetractPct) / 100;
     const ivaReverse = round2(reverse.reduce((s, i) => s + ivaOn(i), 0));
     const ivaDebito = round2(active.reduce((s, i) => s + ivaOn(i), 0) + ivaReverse);
+    // Manual expenses carry detractable VAT too — taxes.jsx has always counted
+    // it, and dropping it here would silently raise what the user pays.
+    const ivaCreditoSpese = round2(manual.reduce((s, e) => s + computeExpenseFiscals(e).vatDetracted, 0));
     const ivaCredito = round2(passive.reduce((s, i) => s + detractedOn(i), 0)
-      + reverse.reduce((s, i) => s + detractedOn(i), 0));
+      + reverse.reduce((s, i) => s + detractedOn(i), 0) + ivaCreditoSpese);
 
     // Costs — competenza vs cassa, with cespiti spread over their schedule
     const costInvoices = invoices.filter(i => i.direction === 'passive');
     const cespiti = costInvoices
-      .filter(i => i.fiscal && i.fiscal.amortize)
+      .filter(i => i.fiscal && i.fiscal.amortize && (i.sign || 1) > 0)
       .map(i => {
         const s = buildAmortSchedule(i);
         return { ...s, quotaYear: amortQuotaFor(s, year), residual: amortResidualAt(s, year) };
@@ -2386,8 +2734,10 @@ In `src/renderer/fiscal.js`, add before the final `return { ... }`:
         .reduce((s, i) => s + invoiceCostFiscals(i).imponibile * pct(i.fiscal && i.fiscal.deductPct) / 100, 0)
     );
 
-    const paidThisYear = costInvoices.filter(i => settledInYear(i) && !(i.fiscal && i.fiscal.amortize));
-    const manual = expenses.filter(e => !e.billable && String(e.monthKey || '').startsWith(yr + '-'));
+    // A cespite deducts by competenza through its schedule, so it is the one
+    // cost that escapes the cash basis; everything else waits to be paid.
+    const paidThisYear = costInvoices.filter(i =>
+      settledInYear(i) && !(i.fiscal && i.fiscal.amortize && (i.sign || 1) > 0));
     const costiDeducibili = round2(
       paidThisYear.reduce((s, i) => s + invoiceCostFiscals(i).deductible, 0)
       + cespiti.reduce((s, c) => s + c.quotaYear, 0)
@@ -2406,7 +2756,7 @@ In `src/renderer/fiscal.js`, add before the final `return { ... }`:
 
     // Forecast — only months no active invoice covers (no double counting)
     const coveredMonths = {};
-    invoices.filter(i => i.direction === 'active' && i.clientId && i.linkedMonthKey)
+    invoices.filter(i => i.direction === 'active' && (i.sign || 1) > 0 && i.clientId && i.linkedMonthKey)
       .forEach(i => { coveredMonths[`${i.clientId}|${i.linkedMonthKey}`] = i.id; });
 
     const monthTotals = new Map();
@@ -2427,16 +2777,29 @@ In `src/renderer/fiscal.js`, add before the final `return { ... }`:
 
     // Liquidation periods
     const periodDefs = fiscal.ivaLiquidazione === 'mensile' ? MONTHLY : QUARTERS;
+    let creditoRiportato = 0;
     const periods = periodDefs.map(p => {
       const inPeriod = list => list.filter(i => p.months.includes(i.date.slice(5, 7)));
       const rc = inPeriod(reverse);
       const dbt = round2(inPeriod(active).reduce((s, i) => s + ivaOn(i), 0) + rc.reduce((s, i) => s + ivaOn(i), 0));
-      const crd = round2(inPeriod(passive).reduce((s, i) => s + detractedOn(i), 0) + rc.reduce((s, i) => s + detractedOn(i), 0));
+      const speseVat = round2(manual
+        .filter(e => p.months.includes(String(e.monthKey).slice(5, 7)))
+        .reduce((s, e) => s + computeExpenseFiscals(e).vatDetracted, 0));
+      const crd = round2(inPeriod(passive).reduce((s, i) => s + detractedOn(i), 0) + rc.reduce((s, i) => s + detractedOn(i), 0) + speseVat);
+      // Real liquidation carries a period's credit forward: a quarter ending in
+      // credit reduces what the next quarter pays. Netting each period in
+      // isolation overstates the F24 the user actually files.
+      const lordo = round2(dbt - crd);
+      const creditoPrecedente = creditoRiportato;
+      const netto = round2(lordo - creditoPrecedente);
+      creditoRiportato = netto < 0 ? round2(-netto) : 0;
       return {
         id: p.id, label: p.label, months: p.months,
         ivaDebito: dbt, ivaCredito: crd,
         ivaReverse: round2(rc.reduce((s, i) => s + ivaOn(i), 0)),
-        saldo: round2(dbt - crd),
+        creditoPrecedente,
+        saldo: netto > 0 ? netto : 0,
+        saldoLordo: lordo,
       };
     });
 
@@ -2470,7 +2833,7 @@ and add `computeFiscalYear` to the returned object.
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `node --test tests/test-fiscal-year.js`
-Expected: PASS — 14 tests.
+Expected: PASS — 15 tests.
 
 - [ ] **Step 5: Run the whole suite**
 
@@ -2542,9 +2905,38 @@ In `src/renderer/i18n.js`, add to the `it` block (next to the other `nav.*` keys
       'inv.openOriginal': 'Apri XML originale',
       'inv.empty': 'Nessuna fattura importata',
       'inv.emptyHint': 'Importa le fatture elettroniche per avere ricavi, costi e IVA reali.',
+      'inv.kpiInvoiced': 'Ricavi fatturati',
+      'inv.kpiCosts': 'Costi da fatture',
+      'inv.vatDebit': 'IVA a debito',
+      'inv.vatCredit': 'IVA a credito',
+      'inv.ofWhichReverse': 'di cui reverse',
+      'inv.activeInvoices': 'fatture attive',
+      'inv.passiveInvoices': 'fatture passive',
+      'inv.balanceShort': 'saldo',
+      'inv.allQuarters': 'Tutti i trimestri',
+      'inv.period': 'Periodo',
+      'inv.balance': 'Saldo',
+      'inv.docType': 'TipoDocumento',
+      'inv.withholdingRow': 'Ritenuta',
+      'inv.cassaRow': 'Cassa',
+      'inv.line': 'Riga',
+      'inv.taxAmount': 'Imposta',
+      'inv.summaryRow': 'Riepilogo',
+      'inv.settlementDate': 'Data saldo',
+      'inv.notes': 'Note',
 ```
 
-English values: `Invoices`, `Active`, `Passive`, `VAT registers`, `Import invoices`, `Number`, `Date`, `Counterparty`, `Taxable`, `VAT`, `Total`, `Status`, `To collect`, `To pay`, `Collected`, `Paid`, `Mark as settled`, `Reverse charge`, `Credit note`, `Asset`, `To review`, `Invoice data (read-only)`, `Classification`, `Category`, `Deductible %`, `Deductible VAT %`, `Amortization years`, `Client`, `Timesheet month`, `Open original XML`, `No invoices imported`, `Import your e-invoices to work from real revenue, costs and VAT.`
+English values: `Invoices`, `Sales`, `Purchases`, `VAT registers`, `Import invoices`, `Number`, `Date`, `Counterparty`, `Taxable`, `VAT`, `Total`, `Status`, `To collect`, `To pay`, `Collected`, `Paid`, `Mark as settled`, `Reverse charge`, `Credit note`, `Asset`, `To review`, `Invoice data (read-only)`, `Classification`, `Category`, `Deductible %`, `Deductible VAT %`, `Amortization years`, `Client`, `Timesheet month`, `Open original XML`, `No invoices imported`, `Import your e-invoices to work from real revenue, costs and VAT.`, `Invoiced revenue`, `Costs from invoices`, `VAT payable`, `VAT recoverable`, `of which reverse`, `sales invoices`, `purchase invoices`, `balance`, `All quarters`, `Period`, `Balance`, `Document type`, `Withholding`, `Pension fund`, `Line`, `Tax amount`, `Summary`, `Settlement date`, `Notes`
+
+Every one of these must exist under BOTH `it` and `en`: the app has a live
+language switcher, so a hardcoded Italian string leaves the screen half
+translated for an English user.
+
+**Terminology note, deliberate:** *fatture attive / passive* are false friends —
+in English accounting they are **sales** and **purchase** invoices, never
+"active"/"passive". And `inv.vatCredit` is "VAT **recoverable**", not "VAT
+deductible", because the screen already carries `inv.vatDetractPct` = "Deductible
+VAT %", a per-cost percentage; two different figures must not share a word.
 
 - [ ] **Step 2: Add the Sidebar entry**
 
@@ -2570,7 +2962,12 @@ Add the state next to the other collections (after `const [expenses, setExpenses
   const [editingInvoice, setEditingInvoice] = useState(null);
 ```
 
-In `dbLoadAll()`'s localStorage fallback object add `invoices: AppStorage.load('ts_invoices', null),` and in `AppStorage.KEYS` (`src/renderer/storage.js`) add `invoices: 'ts_invoices',`.
+In `dbLoadAll()`'s localStorage fallback object add BOTH
+`invoices: AppStorage.load('ts_invoices', null),` and
+`supplierRules: AppStorage.load('supplierRules', null),` — `dbSave` writes
+`supplierRules` on that path, so without the matching read every remembered
+supplier rule is silently discarded on the next load. In `AppStorage.KEYS`
+(`src/renderer/storage.js`) add `invoices: 'ts_invoices',`.
 
 In the `init()` effect, after `setExpenses(...)`:
 
@@ -2579,7 +2976,12 @@ In the `init()` effect, after `setExpenses(...)`:
       setSupplierRules(data.supplierRules || {});
 ```
 
-In `seedDemo` and `startEmpty`, set `setInvoices([])` and save `await window.api.db.saveCollection('invoices', [])`.
+In `seedDemo` and `startEmpty`, set `setInvoices([])` and save
+`await window.api.db.saveCollection('invoices', [])`.
+
+Also add `setInvoices([]); setSupplierRules({});` to `handleResetData` — it
+restores the demo dataset, and leaving imported invoices behind would strand
+them against clients the reset has just replaced.
 
 Add the persistence effect next to the others:
 
@@ -2646,7 +3048,7 @@ Create `src/renderer/components/invoices.jsx`:
 // rendered read-only (P1). Only the classification block is editable.
 const InvoiceBadges = ({ inv }) => (
   <>
-    {inv.reverseCharge && <span className="badge badge-warning badge-dot" title="Reverse charge">{t('inv.reverseCharge')}</span>}
+    {inv.reverseCharge && <span className="badge badge-warning badge-dot" title={t('inv.reverseCharge')}>{t('inv.reverseCharge')}</span>}
     {inv.sign === -1 && <span className="badge badge-warning badge-dot">{t('inv.creditNote')}</span>}
     {inv.fiscal && inv.fiscal.amortize && <span className="badge badge-dot">{t('inv.asset')}</span>}
     {!inv.reviewedAt && <span className="badge badge-warning badge-dot">{t('inv.review')}</span>}
@@ -2677,24 +3079,24 @@ const Invoices = ({ invoices, clients, currentYear, onImport, onEdit, onDelete }
     <div className="content">
       <div className="kpi-grid" style={{ gridTemplateColumns: "repeat(4, 1fr)" }}>
         <div className="kpi">
-          <div className="kpi-label">Ricavi fatturati {yearFilter}</div>
+          <div className="kpi-label">{t('inv.kpiInvoiced')} {yearFilter}</div>
           <div className="kpi-value tabular">{fmtEUR(fy.consuntivo.ricavi)}</div>
-          <div className="kpi-meta"><span>{active.length} fatture attive</span></div>
+          <div className="kpi-meta"><span>{active.length} {t('inv.activeInvoices')}</span></div>
         </div>
         <div className="kpi">
-          <div className="kpi-label">Costi da fatture</div>
+          <div className="kpi-label">{t('inv.kpiCosts')}</div>
           <div className="kpi-value tabular">{fmtEUR(fy.consuntivo.costiCompetenza)}</div>
-          <div className="kpi-meta"><span>{passive.length} fatture passive</span></div>
+          <div className="kpi-meta"><span>{passive.length} {t('inv.passiveInvoices')}</span></div>
         </div>
         <div className="kpi">
-          <div className="kpi-label">IVA a debito</div>
+          <div className="kpi-label">{t('inv.vatDebit')}</div>
           <div className="kpi-value tabular">{fmtEUR(fy.consuntivo.ivaDebito)}</div>
-          <div className="kpi-meta"><span>di cui reverse {fmtEUR(fy.consuntivo.ivaReverse)}</span></div>
+          <div className="kpi-meta"><span>{t('inv.ofWhichReverse')} {fmtEUR(fy.consuntivo.ivaReverse)}</span></div>
         </div>
         <div className="kpi">
-          <div className="kpi-label">IVA a credito</div>
+          <div className="kpi-label">{t('inv.vatCredit')}</div>
           <div className="kpi-value tabular">{fmtEUR(fy.consuntivo.ivaCredito)}</div>
-          <div className="kpi-meta"><span>saldo {fmtEUR(fy.consuntivo.ivaSaldo)}</span></div>
+          <div className="kpi-meta"><span>{t('inv.balanceShort')} {fmtEUR(fy.consuntivo.ivaSaldo)}</span></div>
         </div>
       </div>
 
@@ -2715,7 +3117,7 @@ const Invoices = ({ invoices, clients, currentYear, onImport, onEdit, onDelete }
           {(years.length ? years : [String(currentYear)]).map(y => <option key={y} value={y}>{y}</option>)}
         </select>
         <select className="select" value={periodFilter} onChange={e => setPeriodFilter(e.target.value)}>
-          <option value="all">Tutti i trimestri</option>
+          <option value="all">{t('inv.allQuarters')}</option>
           {["Q1", "Q2", "Q3", "Q4"].map(q => <option key={q} value={q}>{q}</option>)}
         </select>
         <button className="btn btn-primary" onClick={onImport}>{t('inv.import')}</button>
@@ -2726,11 +3128,11 @@ const Invoices = ({ invoices, clients, currentYear, onImport, onEdit, onDelete }
           <table className="data">
             <thead>
               <tr>
-                <th>Periodo</th>
-                <th className="num">IVA a debito</th>
-                <th className="num">IVA a credito</th>
-                <th className="num">di cui reverse</th>
-                <th className="num">Saldo</th>
+                <th>{t('inv.period')}</th>
+                <th className="num">{t('inv.vatDebit')}</th>
+                <th className="num">{t('inv.vatCredit')}</th>
+                <th className="num">{t('inv.ofWhichReverse')}</th>
+                <th className="num">{t('inv.balance')}</th>
               </tr>
             </thead>
             <tbody>
@@ -2795,7 +3197,7 @@ const Invoices = ({ invoices, clients, currentYear, onImport, onEdit, onDelete }
             {list.length > 0 && (
               <tfoot>
                 <tr>
-                  <td colSpan={3}>Totale</td>
+                  <td colSpan={3}>{t('inv.total')}</td>
                   <td className="num mono">{fmtEUR(sum(list, i => i.totals.imponibile))}</td>
                   <td className="num mono">{fmtEUR(sum(list, i => i.totals.imposta))}</td>
                   <td className="num"><strong>{fmtEUR(sum(list, i => i.totals.documento))}</strong></td>
@@ -2840,22 +3242,26 @@ const InvoiceDrawer = ({ invoice, clients, onSave, onClose }) => {
         <button className="btn btn-primary" onClick={save}>{t('action.save')}</button>
       </>}>
 
-      <h3 className="section-title">{t('inv.fromXml')}</h3>
+      {/* P1 is a visual promise, not only a code one: the immutable block gets a
+          sunken background so it reads as a record, not a form. */}
+      <div style={{ background: "var(--bg-sunken)", border: "1px solid var(--border)",
+                    borderRadius: "var(--radius)", padding: 12 }}>
+      <h3 className="section-title" style={{ marginTop: 0 }}>{t('inv.fromXml')}</h3>
       <table className="data">
         <tbody>
           <tr><td>{t('inv.date')}</td><td className="mono">{invoice.date}</td>
-              <td>TipoDocumento</td><td className="mono">{invoice.tipoDoc}</td></tr>
+              <td>{t('inv.docType')}</td><td className="mono">{invoice.tipoDoc}</td></tr>
           <tr><td>{t('inv.taxable')}</td><td className="num mono">{fmtEUR(invoice.totals.imponibile)}</td>
               <td>{t('inv.vat')}</td><td className="num mono">{fmtEUR(invoice.totals.imposta)}</td></tr>
           {invoice.withholding && (
-            <tr><td>Ritenuta {invoice.withholding.aliquota}%</td><td className="num mono">{fmtEUR(invoice.withholding.importo)}</td>
-                <td>Cassa</td><td className="num mono">{invoice.cassa ? fmtEUR(invoice.cassa.importo) : "—"}</td></tr>
+            <tr><td>{t('inv.withholdingRow')} {invoice.withholding.aliquota}%</td><td className="num mono">{fmtEUR(invoice.withholding.importo)}</td>
+                <td>{t('inv.cassaRow')}</td><td className="num mono">{invoice.cassa ? fmtEUR(invoice.cassa.importo) : "—"}</td></tr>
           )}
         </tbody>
       </table>
 
       <table className="data" style={{ marginTop: 12 }}>
-        <thead><tr><th>Riga</th><th className="num">IVA</th><th className="num">Imponibile</th><th className="num">Imposta</th></tr></thead>
+        <thead><tr><th>{t('inv.line')}</th><th className="num">{t('inv.vat')}</th><th className="num">{t('inv.taxable')}</th><th className="num">{t('inv.taxAmount')}</th></tr></thead>
         <tbody>
           {invoice.lines.map(l => (
             <tr key={l.n}><td>{l.desc}</td><td className="num mono">{l.vatPct != null ? l.vatPct + "%" : l.natura}</td>
@@ -2863,11 +3269,12 @@ const InvoiceDrawer = ({ invoice, clients, onSave, onClose }) => {
           ))}
           {invoice.vatSummary.map((v, i) => (
             <tr key={"r" + i} style={{ color: "var(--text-muted)" }}>
-              <td>Riepilogo {v.natura || ""}</td><td className="num mono">{v.vatPct}%</td>
+              <td>{t('inv.summaryRow')} {v.natura || ""}</td><td className="num mono">{v.vatPct}%</td>
               <td className="num mono">{fmtEUR(v.imponibile)}</td><td className="num mono">{fmtEUR(v.imposta)}</td></tr>
           ))}
         </tbody>
       </table>
+      </div>
 
       <h3 className="section-title" style={{ marginTop: 20 }}>{t('inv.classification')}</h3>
       <div className="form-grid">
@@ -2935,13 +3342,13 @@ const InvoiceDrawer = ({ invoice, clients, onSave, onClose }) => {
           </select>
         </div>
         <div className="field">
-          <label>Data saldo</label>
+          <label>{t('inv.settlementDate')}</label>
           <input type="date" className="input mono" value={edit.settlement.date || ""}
             onChange={e => setEdit(x => ({ ...x, settlement: { ...x.settlement, date: e.target.value || null } }))} />
         </div>
 
         <div className="field full">
-          <label>Note</label>
+          <label>{t('inv.notes')}</label>
           <input className="input" value={edit.notes} onChange={e => setEdit(x => ({ ...x, notes: e.target.value }))} />
         </div>
       </div>
@@ -3018,9 +3425,10 @@ In `src/renderer/i18n.js` (`it`, mirrored in `en`):
       'imp.confirm': 'Conferma e importa',
       'imp.done': 'Importate {n} fatture',
       'imp.noStudio': 'Imposta P.IVA e Codice Fiscale in Impostazioni prima di importare.',
+      'imp.selectClient': '— cliente —',
 ```
 
-English: `Import e-invoices`, `Choose folder or files…`, `Supports .xml, .xml.p7m and .zip. Nothing is saved until you confirm.`, `Reading files…`, `New`, `Duplicates in batch`, `Already imported`, `To review`, `Skipped`, `Select all`, `Remember for this supplier`, `Confirm and import`, `Imported {n} invoices`, `Set your VAT number and tax code in Settings before importing.`
+English: `— client —`, `Import e-invoices`, `Choose folder or files…`, `Supports .xml, .xml.p7m and .zip. Nothing is saved until you confirm.`, `Reading files…`, `New`, `Duplicates in batch`, `Already imported`, `To review`, `Skipped`, `Select all`, `Remember for this supplier`, `Confirm and import`, `Imported {n} invoices`, `Set your VAT number and tax code in Settings before importing.`
 
 - [ ] **Step 2: Write the wizard**
 
@@ -3054,7 +3462,10 @@ const InvoiceImportWizard = ({ open, onClose, onImported }) => {
           clientId: it.proposal.clientId,
           linkedMonthKey: it.proposal.linkedMonthKey,
           fiscal: it.proposal.fiscal,
-          rememberSupplier: it.direction === 'passive',
+          // Pre-armed for a confident proposal, deliberately NOT for one flagged
+          // for review: remembering a rule the user never actually looked at is
+          // how a wrong category becomes permanent.
+          rememberSupplier: it.direction === 'passive' && !it.needsReview,
         };
       });
       setDecisions(initial);
@@ -3166,16 +3577,39 @@ const InvoiceImportWizard = ({ open, onClose, onImported }) => {
                               onChange={e => {
                                 const cat = e.target.value;
                                 const r = window.CATEGORY_RULES[cat];
-                                setDecision(it.id, { fiscal: { ...d.fiscal, category: cat, deductPct: r ? r.deductPct : 100 } });
+                                // Recompute the cespite decision, not only the category: this row
+                                // exists to correct a wrong guess, and a stale `amortize` would
+                                // either capitalise a non-asset or expense a real one in full.
+                                // Mirrors proposeFiscal, including its credit-note guard.
+                                const amortize = (it.doc.sign || 1) > 0
+                                  && cat === 'Hardware'
+                                  && it.doc.totals.imponibile >= window.AMORTIZE_THRESHOLD;
+                                setDecision(it.id, { fiscal: {
+                                  ...d.fiscal, category: cat, deductPct: r ? r.deductPct : 100,
+                                  amortize,
+                                  amortYears: amortize ? (d.fiscal.amortYears || 4) : null,
+                                  firstYearHalf: amortize,
+                                } });
                               }}>
                               {Object.keys(window.CATEGORY_RULES).map(c => <option key={c} value={c}>{c}</option>)}
                             </select>
                           ) : (
-                            <select className="select" value={d.clientId || ''}
-                              onChange={e => setDecision(it.id, { clientId: e.target.value || null })}>
-                              <option value="">— cliente —</option>
-                              {(window.__clients || []).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                            </select>
+                            <div style={{ display: 'flex', gap: 6 }}>
+                              <select className="select" value={d.clientId || ''}
+                                onChange={e => setDecision(it.id, { clientId: e.target.value || null })}>
+                                <option value="">{t('imp.selectClient')}</option>
+                                {(window.__clients || []).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                              </select>
+                              {/* The covered month is proposed from the document date, which is
+                                  right when you invoice at month end and wrong when you invoice
+                                  August 5th for July's work. It decides whether that month's
+                                  timesheet still counts as "to invoice", so it is correctable
+                                  here rather than buried in the detail drawer. */}
+                              <input className="input mono" style={{ width: 96 }} placeholder="2026-07"
+                                title={t('inv.linkedMonth')}
+                                value={d.linkedMonthKey || ''}
+                                onChange={e => setDecision(it.id, { linkedMonthKey: e.target.value || null })} />
+                            </div>
                           )}
                         </td>
                         <td>
@@ -3212,7 +3646,7 @@ const InvoiceImportWizard = ({ open, onClose, onImported }) => {
 
       {step === 3 && result && (
         <div className="empty-state">
-          <div className="title">{t('imp.done').replace('{n}', result.records.length)}</div>
+          <div className="title">{t('imp.done', { n: result.records.length })}</div>
         </div>
       )}
     </Modal>
@@ -3238,7 +3672,7 @@ Add the commit handler and mount the wizard next to the other modals:
       return Array.from(byId.values());
     });
     if (rules) setSupplierRules(rules);
-    window.showToast(`Importate ${records.length} fatture`, 'success');
+    window.showToast(t('imp.done', { n: records.length }), 'success');
   };
 ```
 
@@ -3303,9 +3737,10 @@ In `src/renderer/i18n.js` (`it`, mirrored in `en`):
       'tax.assetResidual': 'Residuo',
       'tax.assetYears': 'Anni',
       'tax.reverseNeutral': 'Reverse charge (neutro)',
+      'tax.basisCash': 'base cassa',
 ```
 
-English: `Invoiced`, `To invoice`, `Assets & depreciation`, `Cost`, `Year quota`, `Residual`, `Years`, `Reverse charge (neutral)`.
+English: `Invoiced`, `To invoice`, `Assets & depreciation`, `Cost`, `Year quota`, `Residual`, `Years`, `Reverse charge (neutral)`, `cash basis`.
 
 - [ ] **Step 2: Source revenue and costs from the invoices**
 
@@ -3330,12 +3765,19 @@ and immediately after the `const yearExp = ...` line insert:
 Replace the `compensi`, `ritenutaTrattenuta`, `compensiConRit`, `ivaDebito`, `ivaCredito` and `costiDeducibili` definitions with:
 
 ```js
+  // Base CASSA (art. 54 TUIR), chosen by the user: for a professionista the
+  // taxable base is what was actually INCASSATO and actually PAGATO. Fatturato,
+  // da incassare and previsionale stay visible as information, outside the
+  // base — pairing accrual revenue with cash costs inflated the income.
   const ricaviFatturati = fy.consuntivo.ricavi;
   const ricaviPrevisionali = fy.previsionale.ricavi;
-  const compensi = ricaviFatturati + ricaviPrevisionali;
+  const ricaviIncassati = fy.consuntivo.ricaviIncassati;
+  const daIncassare = Math.round((ricaviFatturati - ricaviIncassati) * 100) / 100;
+  const compensi = ricaviIncassati;
 
-  const ritenutaTrattenuta = fy.consuntivo.ritenutaSubita;
-  const compensiConRit = ricaviFatturati;      // withholding only ever applies to issued invoices
+  // La ritenuta d'acconto è operata al pagamento, non all'emissione.
+  const ritenutaTrattenuta = fy.consuntivo.ritenutaIncassata;
+  const compensiConRit = ricaviIncassati;
   const compensiSenzaRit = compensi - compensiConRit;
 
   const ivaDebito = fy.consuntivo.ivaDebito;
@@ -3349,18 +3791,28 @@ Replace the body of the `trimestri` computation so periods come from `fy` rather
 
 ```js
   const trimestri = ivaDeadlines.map(qt => {
-    const period = fy.periods.find(p => p.id === qt.id) || { ivaDebito: 0, ivaCredito: 0, ivaReverse: 0, saldo: 0 };
+    // computeFiscalYear returns four quarters under quarterly liquidation and
+    // twelve months under monthly. Match on the months each period covers
+    // rather than on its id, and fold whatever we got into this table's four
+    // rows: matching by id would silently render every quarter as zero for a
+    // profile set to 'mensile'.
+    const parts = fy.periods.filter(p => p.months.every(m => qt.months.includes(m)));
+    const sum = pick => Math.round(parts.reduce((s, p) => s + (p[pick] || 0), 0) * 100) / 100;
     return {
       ...qt,
-      debit: period.ivaDebito,
-      credit: period.ivaCredito,
-      reverse: period.ivaReverse,
-      saldo: period.saldo,
+      debit: sum('ivaDebito'),
+      credit: sum('ivaCredito'),
+      reverse: sum('ivaReverse'),
+      saldo: sum('saldo'),
+      // The F24 generator below reads `balance`; the liquidation saldo is what
+      // actually gets paid, so it keeps that name too.
+      balance: sum('saldo'),
     };
   });
 ```
 
-Add `fy`, `ricaviFatturati` and `ricaviPrevisionali` to the object `computeTaxes` returns.
+Add `fy`, `ricaviFatturati`, `ricaviPrevisionali`, `ricaviIncassati` and
+`daIncassare` to the object `computeTaxes` returns.
 
 - [ ] **Step 3: Show the split and the reverse-charge row**
 
@@ -3369,6 +3821,7 @@ In the revenue KPI of the Taxes component, render both figures:
 ```jsx
           <div className="kpi-meta">
             <span>{t('tax.invoiced')} {fmtEUR(res.ricaviFatturati)}</span>
+            <span> · {t('dash.toCollect')} {fmtEUR(res.daIncassare)}</span>
             <span> · {t('tax.forecast')} {fmtEUR(res.ricaviPrevisionali)}</span>
           </div>
 ```
@@ -3469,10 +3922,11 @@ In `src/renderer/i18n.js` (`it`, mirrored in `en`):
       'dash.toCollect': 'Da incassare',
       'dash.costsByCategory': 'Costi per categoria',
       'dash.upcoming': 'Prossime scadenze',
+      'dash.vatBalanceYear': 'Saldo IVA anno',
       'exp.invoiceHint': 'I costi documentati da fattura elettronica si gestiscono in Fatture.',
 ```
 
-English: `Invoiced revenue YTD`, `To collect`, `Costs by category`, `Upcoming due dates`, `Costs backed by an e-invoice are managed in Invoices.`
+English: `Invoiced revenue YTD`, `To collect`, `Costs by category`, `Upcoming due dates`, `VAT balance, year`, `Costs backed by an e-invoice are managed in Invoices.`
 
 - [ ] **Step 2: Add the KPIs and the scadenze list**
 
@@ -3499,7 +3953,7 @@ Add two KPIs to the existing grid:
         <div className="kpi">
           <div className="kpi-label">{t('dash.toCollect')}</div>
           <div className="kpi-value tabular">{fmtEUR(daIncassare)}</div>
-          <div className="kpi-meta"><span>IVA periodo {fmtEUR(fy.consuntivo.ivaSaldo)}</span></div>
+          <div className="kpi-meta"><span>{t('dash.vatBalanceYear')} {fmtEUR(fy.consuntivo.ivaSaldo)}</span></div>
         </div>
 ```
 
@@ -3510,6 +3964,9 @@ and, below the existing cards, the two new blocks:
         <div className="card-header"><strong>{t('dash.costsByCategory')}</strong></div>
         <table className="data">
           <tbody>
+            {Object.keys(fy.costiPerCategoria).length === 0 && (
+              <tr><td colSpan={2}><div className="empty-state"><div className="title">—</div></div></td></tr>
+            )}
             {Object.entries(fy.costiPerCategoria)
               .sort((a, b) => b[1] - a[1])
               .map(([cat, amount]) => (
@@ -3528,9 +3985,14 @@ and, below the existing cards, the two new blocks:
                 <td className="mono">{s.date}</td>
                 <td>{s.counterparty}</td>
                 <td>
-                  <span className={"badge badge-dot " + (s.direction === 'active' ? 'badge-success' : '')}>
-                    {s.direction === 'active' ? t('inv.open') : t('inv.openPassive')}
-                  </span>
+                  {/* A credit note carries a negative amount, so labelling it
+                      "da pagare" reads as a payment you owe. Name it for what
+                      it is instead. */}
+                  {s.amount < 0
+                    ? <span className="badge badge-warning badge-dot">{t('inv.creditNote')}</span>
+                    : <span className={"badge badge-dot " + (s.direction === 'active' ? 'badge-success' : '')}>
+                        {s.direction === 'active' ? t('inv.open') : t('inv.openPassive')}
+                      </span>}
                 </td>
                 <td className="num mono">{fmtEUR(s.amount)}</td>
               </tr>
@@ -3584,6 +4046,10 @@ const InvoicedForMonth = ({ client, monthKey, invoices, acts }) => {
         </div>
       ))}
       <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, padding: "6px 0 0", marginTop: 6, borderTop: "1px solid var(--border)" }}>
+        <span style={{ color: "var(--text-muted)" }}>Totale fatturato</span>
+        <span className="mono"><strong>{fmtEUR(invoiced)}</strong></span>
+      </div>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, padding: "3px 0" }}>
         <span style={{ color: "var(--text-muted)" }}>Lavoro registrato</span>
         <span className="mono">{fmtH(hours)}</span>
       </div>

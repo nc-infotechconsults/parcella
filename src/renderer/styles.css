@@ -756,6 +756,14 @@ table.data .num { text-align: right; font-variant-numeric: tabular-nums; font-fa
 
 .modal-lg { max-width: 720px; }
 .modal-xl { max-width: 1000px; }
+/* Near-fullscreen: for the import review, where a row carries a checkbox, a
+   date, a counterparty, an amount, a category or client, a month and a
+   remember-toggle. At 720px those collapse into each other. */
+.modal-full {
+  max-width: none;
+  width: calc(100vw - 32px);
+  max-height: calc(100vh - 32px);
+}
 
 .modal-header {
   padding: 20px 24px;

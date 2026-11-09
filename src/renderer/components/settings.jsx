@@ -105,11 +105,12 @@ const DataBackupTab = ({ onResetData }) => {
         <div className="card">
           <div className="card-header"><h3>Database SQLite</h3></div>
           <div className="card-body">
-            <div className="info-grid" style={{ gridTemplateColumns: "repeat(4, 1fr)", marginBottom: 16 }}>
+            <div className="info-grid" style={{ gridTemplateColumns: "repeat(5, 1fr)", marginBottom: 16 }}>
               <div className="info-cell"><div className="label">Tipo storage</div><div className="value mono">{info.dbType?.toUpperCase()}</div></div>
               <div className="info-cell"><div className="label">Dimensione</div><div className="value mono">{fmt(info.stats.sizeBytes)}</div></div>
               <div className="info-cell"><div className="label">Clienti</div><div className="value">{info.stats.clients}</div></div>
               <div className="info-cell"><div className="label">Attività</div><div className="value">{info.stats.activities}</div></div>
+              <div className="info-cell"><div className="label">Fatture</div><div className="value">{info.stats.invoices}</div></div>
             </div>
             <div style={{ fontSize: 11.5, color: "var(--text-muted)", fontFamily: "var(--font-mono)", wordBreak: "break-all" }}>
               {info.dbPath}
@@ -250,13 +251,346 @@ const DataBackupTab = ({ onResetData }) => {
 };
 
 // ── Profilo & impostazioni ────────────────────────────────────────────────────
-const Settings = ({ user, onSave, onResetData }) => {
+// Purchase treatment belongs to the KIND OF GOOD, so it is edited once here
+// rather than on every document. Saved edits are stored as overrides and merged
+// over the built-in defaults; existing invoices keep the values they were
+// classified with, and only change if you explicitly re-apply.
+const CategoryRulesTab = ({ categories, invoices, expenses, onSaveCategories }) => {
+  const effective = window.effectiveCategories(categories);
+  const asRows = () => Object.keys(effective).sort().map((name, i) => ({
+    key: 'r' + i, original: name, name, rule: { ...effective[name] }, removed: false, moveTo: '',
+  }));
+  const [rows, setRows] = useState(asRows);
+  const [error, setError] = useState('');
+
+  const patch = (key, p) => setRows(rs => rs.map(r => r.key === key ? { ...r, ...p } : r));
+  const setRule = (key, p) => setRows(rs => rs.map(r => r.key === key ? { ...r, rule: { ...r.rule, ...p } } : r));
+  const num = v => Math.min(100, Math.max(0, Number(v) || 0));
+
+  // How many documents would a rename or a deletion move.
+  const usage = name => (invoices || []).filter(i => i.fiscal && i.fiscal.category === name).length
+    + (expenses || []).filter(e => e.category === name).length;
+
+  const addRow = () => setRows(rs => [...rs, {
+    key: 'n' + Date.now(), original: null, name: '',
+    rule: { deductPct: 100, vatDetractPct: 100, vatPct: 22, vatExempt: false },
+    removed: false, moveTo: '',
+  }]);
+
+  const live = rows.filter(r => !r.removed);
+  const names = live.map(r => r.name.trim());
+
+  const save = () => {
+    if (names.some(n => !n)) return setError(t('cat.errEmpty'));
+    if (new Set(names).size !== names.length) return setError(t('cat.errDup'));
+    // Altro is the fallback every unknown category resolves to; without it a
+    // deleted category would have nowhere to land.
+    if (!names.includes('Altro')) return setError(t('cat.errAltro'));
+    for (const r of rows) {
+      if (r.removed && r.original && usage(r.original) > 0 && !r.moveTo) return setError(t('cat.errMove'));
+    }
+    const table = {};
+    live.forEach(r => { table[r.name.trim()] = r.rule; });
+    const moves = {};
+    rows.forEach(r => {
+      if (r.removed && r.original && usage(r.original) > 0) moves[r.original] = r.moveTo;
+      else if (!r.removed && r.original && r.name.trim() !== r.original) moves[r.original] = r.name.trim();
+    });
+    setError('');
+    onSaveCategories(table, moves);
+  };
+
+  return (
+    <div className="card">
+      <div className="card-header">
+        <strong>{t('cat.title')}</strong>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="btn btn-ghost btn-sm" onClick={addRow}>{t('cat.add')}</button>
+          <button className="btn btn-ghost btn-sm" onClick={() => { setRows(asRows()); setError(''); }}>{t('action.cancel')}</button>
+          <button className="btn btn-primary btn-sm" onClick={save}>{t('action.save')}</button>
+        </div>
+      </div>
+      <div className="hint" style={{ padding: '0 16px 8px' }}>{t('cat.hint')}</div>
+      {error && <div className="hint" style={{ padding: '0 16px 8px', color: 'var(--danger)' }}>{error}</div>}
+      <div style={{ overflowX: 'auto' }}>
+        <table className="data">
+          <thead>
+            <tr>
+              <th>{t('inv.category')}</th>
+              <th className="num" style={{ width: 110 }}>{t('cat.deduct')}</th>
+              <th className="num" style={{ width: 120 }}>{t('cat.vatDetract')}</th>
+              <th style={{ width: 160 }}>{t('cat.amort')}</th>
+              <th className="num" style={{ width: 80 }}>{t('cat.usage')}</th>
+              <th style={{ width: 200 }} />
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(r => {
+              const used = r.original ? usage(r.original) : 0;
+              const protectedRow = r.original === 'Altro';
+              return (
+                <tr key={r.key} style={r.removed ? { opacity: 0.45 } : null}>
+                  <td>
+                    <input className="input" value={r.name} disabled={r.removed || protectedRow}
+                      onChange={e => patch(r.key, { name: e.target.value })} />
+                  </td>
+                  <td className="num">
+                    <input type="number" className="input mono" min="0" max="100" style={{ width: 75 }}
+                      disabled={r.removed} value={r.rule.deductPct == null ? 100 : r.rule.deductPct}
+                      onChange={e => setRule(r.key, { deductPct: num(e.target.value) })} />
+                  </td>
+                  <td className="num">
+                    <input type="number" className="input mono" min="0" max="100" style={{ width: 75 }}
+                      disabled={r.removed} value={r.rule.vatDetractPct == null ? 100 : r.rule.vatDetractPct}
+                      onChange={e => setRule(r.key, { vatDetractPct: num(e.target.value) })} />
+                  </td>
+                  <td>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <input type="checkbox" disabled={r.removed} checked={!!r.rule.amortize}
+                        onChange={e => setRule(r.key, { amortize: e.target.checked, amortYears: e.target.checked ? (r.rule.amortYears || 4) : null })} />
+                      <input type="number" className="input mono" style={{ width: 55 }} min="1" max="20"
+                        disabled={r.removed || !r.rule.amortize} value={r.rule.amortYears || 4}
+                        onChange={e => setRule(r.key, { amortYears: Math.max(1, Number(e.target.value) || 4) })} />
+                      <span className="hint">{t('cat.years')}</span>
+                    </label>
+                  </td>
+                  <td className="num mono">{used || ''}</td>
+                  <td>
+                    {r.removed ? (
+                      <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                        {used > 0 && (
+                          <select className="select" value={r.moveTo}
+                            onChange={e => patch(r.key, { moveTo: e.target.value })}>
+                            <option value="">{t('cat.moveTo')}</option>
+                            {live.filter(x => x.name.trim() && x.key !== r.key)
+                              .map(x => <option key={x.key} value={x.name.trim()}>{x.name}</option>)}
+                          </select>
+                        )}
+                        <button className="btn btn-ghost btn-sm" onClick={() => patch(r.key, { removed: false, moveTo: '' })}>
+                          {t('cat.undo')}
+                        </button>
+                      </div>
+                    ) : !protectedRow && (
+                      <button className="btn btn-ghost btn-sm" style={{ color: 'var(--danger)' }}
+                        onClick={() => patch(r.key, { removed: true })}>{t('cat.remove')}</button>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+};
+
+// ===== Aliquote e contributi =====
+// Le aliquote sono configurazione, non un dato della schermata che le usa:
+// prima vivevano dentro Tasse & contributi, dove si modificavano per sbaglio
+// mentre si leggeva un consuntivo, e le addizionali non si potevano cambiare
+// affatto — restavano ferme sui valori con cui il profilo era nato.
+const PctField = ({ label, hint, value, fallback, step, max, unit, onChange }) => (
+  <div className="field">
+    <label>{label}</label>
+    <div className="input-group" style={{ width: 160 }}>
+      <input
+        className="input mono" type="number"
+        step={step || "0.01"} min="0" max={max == null ? 100 : max}
+        value={value == null ? "" : value}
+        placeholder={fallback == null ? "" : String(fallback)}
+        onChange={e => onChange(e.target.value === "" ? null : Math.max(0, Number(e.target.value) || 0))} />
+      <div className="addon">{unit || "%"}</div>
+    </div>
+    {hint && <div className="hint">{hint}</div>}
+  </div>
+);
+
+const CASSA_SOGGETTIVA = {
+  "Inarcassa": 14.5,
+  "Cassa Forense": 14.5,
+  "Cassa Geometri": 12,
+  "ENPAP": 10,
+  "ENPACL": 12,
+  "Gestione Separata INPS": 26.07,
+};
+
+const FiscalRatesCard = ({ fisc, studio, onChange }) => {
+  const tipo = studio.tipoSoggetto || "professionista";
+  const cassaName = studio.cassaName || "Inarcassa";
+  const isGS = cassaName === "Gestione Separata INPS";
+  const suggerita = CASSA_SOGGETTIVA[cassaName];
+  const brackets = fisc.irpefBrackets && fisc.irpefBrackets.length
+    ? fisc.irpefBrackets
+    : [{ upTo: 28000, rate: 23 }, { upTo: 50000, rate: 35 }, { upTo: null, rate: 43 }];
+
+  const setBracket = (i, patch) => onChange({
+    irpefBrackets: brackets.map((b, j) => (j === i ? { ...b, ...patch } : b)),
+  });
+  const addBracket = () => {
+    const next = brackets.slice();
+    const last = next[next.length - 1];
+    // Lo scaglione finale non ha tetto: il nuovo si inserisce prima di quello.
+    next.splice(next.length - 1, 0, { upTo: (last.upTo || next[next.length - 2]?.upTo || 50000) + 10000, rate: last.rate });
+    onChange({ irpefBrackets: next });
+  };
+  const removeBracket = (i) => onChange({ irpefBrackets: brackets.filter((_, j) => j !== i) });
+
+  // Un tetto deve stare sopra quello che lo precede, altrimenti lo scaglione è
+  // vuoto e l'imposta viene calcolata su una fascia che non esiste.
+  const bracketErrors = brackets.map((b, i) => {
+    if (i === brackets.length - 1) return b.upTo != null ? "L'ultimo scaglione non ha tetto" : null;
+    if (b.upTo == null) return "Indica il tetto dello scaglione";
+    const prev = i > 0 ? brackets[i - 1].upTo : 0;
+    return prev != null && b.upTo <= prev ? "Il tetto deve superare lo scaglione precedente" : null;
+  });
+
+  return (
+    <div className="card">
+      <div className="card-header">
+        <div>
+          <h3>Aliquote e contributi</h3>
+          <div className="subtitle">Alimentano Tasse &amp; contributi, F24 e previsioni</div>
+        </div>
+      </div>
+      <div className="card-body">
+        <div className="form-grid" style={{ gridTemplateColumns: "1fr 1fr" }}>
+          {(tipo === "professionista" || tipo === "societa") && (
+            <PctField
+              label={`Aliquota contributiva soggettiva — ${cassaName}`}
+              hint={suggerita ? `Aliquota ordinaria ${String(suggerita).replace(".", ",")}%` : null}
+              value={fisc.cassaContribPct} fallback={suggerita || 14.5} step="0.01" max={50}
+              onChange={v => onChange({ cassaContribPct: v })} />
+          )}
+          {tipo === "professionista" && (
+            <PctField
+              label="Acconto contributi, % dell'anno precedente"
+              hint={isGS
+                ? "Gestione Separata: 80% in due rate uguali. Vuoto = 80%."
+                : "Casse private: in genere 100% in due rate. Vuoto = 100%."}
+              value={fisc.cassaAccontoPct} fallback={isGS ? 80 : 100} step="1" max={100}
+              onChange={v => onChange({ cassaAccontoPct: v })} />
+          )}
+          {tipo === "ditta_individuale" && (
+            <>
+              <PctField
+                label="INPS — minimale annuo" unit="€" step="0.01" max={100000}
+                value={fisc.inpsMinimale} fallback={4427}
+                onChange={v => onChange({ inpsMinimale: v })} />
+              <PctField
+                label="INPS — aliquota sul reddito eccedente" step="0.01" max={50}
+                value={fisc.inpsPctVariabile} fallback={24}
+                onChange={v => onChange({ inpsPctVariabile: v })} />
+              <PctField
+                label="Aliquota IRAP"
+                hint="Solo con autonoma organizzazione" step="0.1" max={10}
+                value={fisc.irapPct} fallback={3.9}
+                onChange={v => onChange({ irapPct: v })} />
+            </>
+          )}
+          <PctField
+            label="Addizionale regionale IRPEF"
+            hint="Dipende dalla tua regione di residenza" step="0.01" max={5}
+            value={fisc.addRegPct} fallback={0}
+            onChange={v => onChange({ addRegPct: v })} />
+          <PctField
+            label="Addizionale comunale IRPEF"
+            hint="Dipende dal tuo comune di residenza" step="0.01" max={5}
+            value={fisc.addComPct} fallback={0}
+            onChange={v => onChange({ addComPct: v })} />
+        </div>
+
+        <div style={{ marginTop: 24, paddingTop: 20, borderTop: "1px solid var(--border)" }}>
+          <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 4 }}>Scaglioni IRPEF</div>
+          <div className="hint" style={{ marginBottom: 10 }}>
+            Cambiano per legge: aggiornali quando cambiano, senza aspettare un rilascio dell'app.
+          </div>
+          <table className="data">
+            <thead>
+              <tr>
+                <th>Fino a</th>
+                <th style={{ width: 120 }}>Aliquota</th>
+                <th style={{ width: 44 }}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {brackets.map((b, i) => (
+                <tr key={i}>
+                  <td>
+                    {i === brackets.length - 1 ? (
+                      <span style={{ color: "var(--text-secondary)" }}>oltre lo scaglione precedente</span>
+                    ) : (
+                      <div className="input-group" style={{ width: 160 }}>
+                        <div className="addon">€</div>
+                        <input className="input mono" type="number" step="500" min="0"
+                          value={b.upTo == null ? "" : b.upTo}
+                          onChange={e => setBracket(i, { upTo: e.target.value === "" ? null : Math.max(0, Number(e.target.value) || 0) })} />
+                      </div>
+                    )}
+                    {bracketErrors[i] && (
+                      <div style={{ color: "var(--danger)", fontSize: 11.5, marginTop: 4 }}>{bracketErrors[i]}</div>
+                    )}
+                  </td>
+                  <td>
+                    <div className="input-group" style={{ width: 100 }}>
+                      <input className="input mono" type="number" step="0.1" min="0" max="100"
+                        value={b.rate == null ? "" : b.rate}
+                        onChange={e => setBracket(i, { rate: Math.max(0, Number(e.target.value) || 0) })} />
+                      <div className="addon">%</div>
+                    </div>
+                  </td>
+                  <td>
+                    {brackets.length > 1 && (
+                      <button className="btn btn-sm btn-ghost" title="Rimuovi scaglione"
+                        onClick={() => removeBracket(i)}>
+                        <Icon name="trash" size={13} />
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <button className="btn btn-sm" style={{ marginTop: 10 }} onClick={addBracket}>
+            <Icon name="plus" size={13} /> Aggiungi scaglione
+          </button>
+        </div>
+
+        <div style={{ marginTop: 24, paddingTop: 20, borderTop: "1px solid var(--border)" }}>
+          <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 4 }}>Base per gli acconti</div>
+          <div className="hint" style={{ marginBottom: 10 }}>
+            Serve solo finché l'archivio non contiene le fatture dell'anno precedente: da quel
+            momento la base viene calcolata da quelle e questi valori restano inutilizzati.
+          </div>
+          <div className="form-grid" style={{ gridTemplateColumns: "1fr 1fr" }}>
+            <PctField label="IRPEF netta dell'anno precedente" unit="€" step="0.01" max={10000000}
+              value={fisc.irpefPrevYear} fallback={0}
+              onChange={v => onChange({ irpefPrevYear: v })} />
+            <PctField label="Contributi dell'anno precedente" unit="€" step="0.01" max={10000000}
+              value={fisc.cassaPrevYear} fallback={0}
+              onChange={v => onChange({ cassaPrevYear: v })} />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const Settings = ({ user, onSave, onResetData, categories, invoices, expenses, onSaveCategories, fiscal, onSaveFiscal }) => {
   const [data, setData] = useState(user);
   const [tab, setTab] = useState("profile");
   const update = (patch) => setData(d => ({ ...d, ...patch }));
 
+  // Only the CHANGED fiscal keys are held, never a copy of the whole object:
+  // the Tasse screen writes to the same record (F24 history, acconti versati),
+  // and saving a snapshot taken when this screen opened would roll those back.
+  const [fiscPatch, setFiscPatch] = useState({});
+  const fisc = { ...(fiscal || {}), ...fiscPatch };
+  const updateFisc = (patch) => setFiscPatch(p => ({ ...p, ...patch }));
+
   const handleSave = () => {
     onSave(data);
+    if (onSaveFiscal && Object.keys(fiscPatch).length) onSaveFiscal({ ...(fiscal || {}), ...fiscPatch });
     window.showToast && window.showToast(t('set.saved'), 'success');
   };
 
@@ -267,6 +601,7 @@ const Settings = ({ user, onSave, onResetData }) => {
         <button className={tab === "fiscal" ? "active" : ""} onClick={() => setTab("fiscal")}>{t('set.fiscal')}</button>
         <button className={tab === "branding" ? "active" : ""} onClick={() => setTab("branding")}>{t('set.branding')}</button>
         <button className={tab === "preferences" ? "active" : ""} onClick={() => setTab("preferences")}>{t('set.preferences')}</button>
+        <button className={tab === "categories" ? "active" : ""} onClick={() => setTab("categories")}>{t('set.categories')}</button>
         <button className={tab === "data" ? "active" : ""} onClick={() => setTab("data")}>{t('set.data')}</button>
       </div>
 
@@ -369,6 +704,8 @@ const Settings = ({ user, onSave, onResetData }) => {
               </div>
             </div>
           </div>
+
+          <FiscalRatesCard fisc={fisc} studio={data} onChange={updateFisc} />
 
           <div className="card">
             <div className="card-header"><h3>Coordinate bancarie</h3></div>
@@ -544,11 +881,12 @@ const Settings = ({ user, onSave, onResetData }) => {
         </div>
       )}
 
+      {tab === "categories" && <CategoryRulesTab categories={categories} invoices={invoices} expenses={expenses} onSaveCategories={onSaveCategories} />}
       {tab === "data" && <DataBackupTab onResetData={onResetData} />}
 
       {tab !== "data" && (
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, alignItems: "center", marginTop: 20 }}>
-          <button className="btn" onClick={() => setData(user)}>{t('action.cancel')}</button>
+          <button className="btn" onClick={() => { setData(user); setFiscPatch({}); }}>{t('action.cancel')}</button>
           <button className="btn btn-primary" onClick={handleSave}>
             <Icon name="check" size={14} /> {t('set.save')}
           </button>

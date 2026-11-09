@@ -4,51 +4,19 @@
 //   billable: false → studio cost
 //     vatExempt: true → no IVA detracted
 //     deductPct: 0-100 → IRPEF deductible portion (es. 80% telefono, 20% auto, 75% pasti)
-//     amortize: true + amortYears → cespite (>= 516.46€ rule)
+//     amortize: true + amortYears → cespite, solo se l'imponibile SUPERA
+//     516,46 € (art. 102 c.5 TUIR); sotto soglia si deduce per intero
 
-const CATEGORY_RULES = {
-  "Trasferta": { deductPct: 100, vatPct: 10, vatExempt: false },
-  "Pasti": { deductPct: 75, vatPct: 10, vatExempt: false, hint: "Pasti deducibili 75% (art. 109 TUIR)" },
-  "Pernottamento": { deductPct: 75, vatPct: 10, vatExempt: false },
-  "Software": { deductPct: 100, vatPct: 22, vatExempt: false },
-  "Stock photo": { deductPct: 100, vatPct: 22, vatExempt: false },
-  "Cancelleria": { deductPct: 100, vatPct: 22, vatExempt: false },
-  "Formazione": { deductPct: 100, vatPct: 22, vatExempt: false },
-  "Telefonia": { deductPct: 80, vatPct: 22, vatExempt: false, hint: "Telefonia deducibile 80% (art. 102 TUIR)" },
-  "Auto": { deductPct: 20, vatPct: 22, vatExempt: false, hint: "Auto non strumentale: deducibilità 20%" },
-  "Rimborso km": { deductPct: 100, vatPct: 0, vatExempt: true, hint: "Rimborso chilometrico al tasso ACI (fuori campo IVA). Importo = km × tariffa ACI vigente." },
-  "Hardware": { deductPct: 100, vatPct: 22, vatExempt: false, hint: "Cespite > 516,46€ → ammortamento pluriennale" },
-  "Assicurazioni": { deductPct: 100, vatPct: 0, vatExempt: true, hint: "Assicurazioni esenti IVA art. 10 DPR 633/72" },
-  "Bolli/Tasse": { deductPct: 100, vatPct: 0, vatExempt: true, hint: "Operazioni fuori campo IVA" },
-  "Altro": { deductPct: 100, vatPct: 22, vatExempt: false },
-};
-const AMORTIZE_THRESHOLD = 516.46;
-
-// Computes fiscal breakdown for a single expense
-function computeExpenseFiscals(e) {
-  const gross = e.amount;
-  const net = e.vatExempt ? gross : gross / (1 + (e.vatPct || 0) / 100);
-  const vat = gross - net;
-  const vatDetracted = e.billable
-    ? vat   // billable: full VAT recovered via fattura cliente
-    : (e.vatExempt ? 0 : vat * Math.min(e.deductPct, 100) / 100);
-  const yearlyDeducted = e.amortize
-    ? (net * e.deductPct / 100) / (e.amortYears || 4)
-    : net * e.deductPct / 100;
-  const inAmortization = e.amortize === true || (!e.billable && net > AMORTIZE_THRESHOLD && (e.category === "Hardware" || e.category === "Auto"));
-  return {
-    gross,
-    net,
-    vat,
-    vatDetracted,
-    yearlyDeducted,
-    inAmortization,
-    nonDeductible: net - (net * e.deductPct / 100),
-  };
-}
-window.computeExpenseFiscals = computeExpenseFiscals;
-window.CATEGORY_RULES = CATEGORY_RULES;
-window.AMORTIZE_THRESHOLD = AMORTIZE_THRESHOLD;
+// Fiscal rules live in src/renderer/fiscal.js and src/shared/categories.js so
+// that Node tests can assert them. These aliases keep existing call sites working.
+// Le regole si leggono al momento dell'uso, non all'avvio: app.jsx sostituisce
+// window.CATEGORY_RULES con quelle configurate dall'utente DOPO il caricamento
+// degli script, quindi una copia presa qui restava ferma sui valori di default
+// e questo modulo ignorava le categorie configurate. invoices.jsx e il wizard
+// leggono già così.
+const rules = () => window.CATEGORY_RULES || {};
+const AMORTIZE_THRESHOLD = window.AMORTIZE_THRESHOLD;
+const computeExpenseFiscals = window.computeExpenseFiscals;
 
 const Expenses = ({ clients, expenses, currentMonthKey, onAdd, onEdit, onDelete }) => {
   const [tab, setTab] = useState("billable");
@@ -116,6 +84,8 @@ const Expenses = ({ clients, expenses, currentMonthKey, onAdd, onEdit, onDelete 
           Per conto proprio <span className="badge" style={{ marginLeft: 8 }}>{own.length}</span>
         </button>
       </div>
+
+      {tab === "own" && <div className="hint" style={{ marginBottom: 8 }}>ⓘ {t('exp.invoiceHint')}</div>}
 
       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 16, flexWrap: "wrap", gap: 12 }}>
         <div className="filter-row">
@@ -287,20 +257,27 @@ const ExpenseForm = ({ expense, defaultBillable, clients, onSave, onCancel, onDe
 
   // Apply category rules when category changes
   const applyCategory = (cat) => {
-    const rule = CATEGORY_RULES[cat] || {};
-    const shouldAmortize = !data.billable && (cat === "Hardware" || cat === "Auto") && data.amount > AMORTIZE_THRESHOLD * (1 + (rule.vatPct || 0) / 100);
+    const rule = rules()[cat] || {};
+    const vatPct = rule.vatPct ?? data.vatPct;
+    const vatExempt = rule.vatExempt ?? false;
+    const net = vatExempt ? data.amount : data.amount / (1 + (vatPct || 0) / 100);
+    // Una sola fonte per le tre condizioni (categoria, segno, soglia): prima
+    // qui c'era un elenco di categorie scritto a mano — Hardware e Auto — che
+    // ignorava la casella "ammortizza" configurata sulle categorie.
+    const fc = window.fiscalForCategory(cat, { sign: 1, imponibile: net, rules: rules() });
     update({
       category: cat,
-      vatPct: rule.vatPct ?? data.vatPct,
-      vatExempt: rule.vatExempt ?? false,
-      deductPct: data.billable ? 100 : (rule.deductPct ?? 100),
-      amortize: data.billable ? false : (data.amortize || shouldAmortize),
+      vatPct,
+      vatExempt,
+      deductPct: data.billable ? 100 : fc.deductPct,
+      amortize: data.billable ? false : fc.amortize,
+      amortYears: fc.amortize ? fc.amortYears : null,
     });
   };
 
   const f = computeExpenseFiscals(data);
-  const exceedsThreshold = !data.billable && f.net > AMORTIZE_THRESHOLD;
-  const rule = CATEGORY_RULES[data.category];
+  const exceedsThreshold = !data.billable && window.exceedsAmortizeThreshold(f.net);
+  const rule = rules()[data.category];
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -333,7 +310,7 @@ const ExpenseForm = ({ expense, defaultBillable, clients, onSave, onCancel, onDe
         <div className="field">
           <label>Categoria</label>
           <select className="select" value={data.category} onChange={e => applyCategory(e.target.value)}>
-            {Object.keys(CATEGORY_RULES).map(c => <option key={c} value={c}>{c}</option>)}
+            {Object.keys(rules()).map(c => <option key={c} value={c}>{c}</option>)}
           </select>
           {rule?.hint && (
             <div className="hint" style={{ color: "var(--accent)" }}>ⓘ {rule.hint}</div>

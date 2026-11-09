@@ -1,7 +1,15 @@
 // Dashboard view
-const Dashboard = ({ clients, activities, currentMonthKey, onNav }) => {
+const Dashboard = ({ clients, activities, expenses, invoices, fiscal, currentMonthKey, currentYear, onNav }) => {
   const monthActivities = activities.filter(a => a.monthKey === currentMonthKey);
   const totalHours = monthActivities.reduce((s, a) => s + a.hours, 0);
+
+  const fy = window.computeFiscalYear({
+    year: currentYear, invoices: invoices || [], activities, expenses, clients,
+    fiscal: fiscal || {}, computeInvoiceAmounts: window.computeInvoiceAmounts,
+  });
+  const daIncassare = (invoices || [])
+    .filter(i => i.direction === 'active' && i.settlement.status === 'open')
+    .reduce((s, i) => s + (i.sign || 1) * i.totals.documento, 0);
 
   // Compute revenue per client this month
   const clientStats = clients.map(c => {
@@ -57,6 +65,16 @@ const Dashboard = ({ clients, activities, currentMonthKey, onNav }) => {
           <div className="kpi-meta">
             <span>su {clients.length} totali</span>
           </div>
+        </div>
+        <div className="kpi">
+          <div className="kpi-label">{t('dash.invoicedYTD')}</div>
+          <div className="kpi-value tabular">{fmtEUR(fy.consuntivo.ricavi)}</div>
+          <div className="kpi-meta"><span>{t('tax.forecast')} {fmtEUR(fy.previsionale.ricavi)}</span></div>
+        </div>
+        <div className="kpi">
+          <div className="kpi-label">{t('dash.toCollect')}</div>
+          <div className="kpi-value tabular">{fmtEUR(daIncassare)}</div>
+          <div className="kpi-meta"><span>{t('dash.vatBalanceYear')} {fmtEUR(fy.consuntivo.ivaSaldo)}</span></div>
         </div>
       </div>
 
@@ -177,6 +195,50 @@ const Dashboard = ({ clients, activities, currentMonthKey, onNav }) => {
             })}
           </div>
         </div>
+      </div>
+
+      <div className="card" style={{ marginTop: 20 }}>
+        <div className="card-header"><strong>{t('dash.costsByCategory')}</strong></div>
+        <table className="data">
+          <tbody>
+            {Object.keys(fy.costiPerCategoria).length === 0 && (
+              <tr><td colSpan={2}><div className="empty-state"><div className="title">—</div></div></td></tr>
+            )}
+            {Object.entries(fy.costiPerCategoria)
+              .sort((a, b) => b[1] - a[1])
+              .map(([cat, amount]) => (
+                <tr key={cat}><td>{cat}</td><td className="num mono">{fmtEUR(amount)}</td></tr>
+              ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="card" style={{ marginTop: 20 }}>
+        <div className="card-header"><strong>{t('dash.upcoming')}</strong></div>
+        <table className="data">
+          <tbody>
+            {fy.scadenze.slice(0, 8).map(s => (
+              <tr key={s.id}>
+                <td className="mono">{s.date}</td>
+                <td>{s.counterparty}</td>
+                <td>
+                  {/* A credit note carries a negative amount, so labelling it
+                      "da pagare" reads as a payment you owe. Name it for what
+                      it is instead. */}
+                  {s.amount < 0
+                    ? <span className="badge badge-warning badge-dot">{t('inv.creditNote')}</span>
+                    : <span className={"badge badge-dot " + (s.direction === 'active' ? 'badge-success' : '')}>
+                        {s.direction === 'active' ? t('inv.open') : t('inv.openPassive')}
+                      </span>}
+                </td>
+                <td className="num mono">{fmtEUR(s.amount)}</td>
+              </tr>
+            ))}
+            {fy.scadenze.length === 0 && (
+              <tr><td colSpan={4}><div className="empty-state"><div className="title">—</div></div></td></tr>
+            )}
+          </tbody>
+        </table>
       </div>
     </div>
   );

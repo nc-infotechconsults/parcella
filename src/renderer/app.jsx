@@ -7,6 +7,9 @@ async function dbLoadAll() {
     clients:    AppStorage.load(AppStorage.KEYS.clients, null),
     activities: AppStorage.load(AppStorage.KEYS.activities, null),
     expenses:   AppStorage.load(AppStorage.KEYS.expenses, null),
+    invoices:   AppStorage.load(AppStorage.KEYS.invoices, null),
+    supplierRules: AppStorage.load('supplierRules', null),
+    categories:    AppStorage.load('categories', null),
     studio:     AppStorage.load(AppStorage.KEYS.studio, null),
     fiscal:     AppStorage.load(AppStorage.KEYS.fiscal, null),
     empty:      !AppStorage.load(AppStorage.KEYS.clients, null),
@@ -15,7 +18,7 @@ async function dbLoadAll() {
 
 function dbSave(key, data) {
   if (window.api?.db) {
-    const isKV = key === 'studio' || key === 'fiscal';
+    const isKV = key === 'studio' || key === 'fiscal' || key === 'supplierRules' || key === 'categories';
     (isKV ? window.api.db.saveKV(key, data) : window.api.db.saveCollection(key, data)).catch(console.error);
   } else {
     AppStorage.save(AppStorage.KEYS[key] || key, data);
@@ -111,6 +114,11 @@ const App = () => {
   const [clients, setClients] = useState([]);
   const [activities, setActivities] = useState([]);
   const [expenses, setExpenses] = useState([]);
+  const [invoices, setInvoices] = useState([]);
+  const [supplierRules, setSupplierRules] = useState({});
+  const [categories, setCategories] = useState({});
+  const [importOpen, setImportOpen] = useState(false);
+  const [editingInvoice, setEditingInvoice] = useState(null);
   const [studio, setStudio] = useState(null);
   const [fiscal, setFiscal] = useState(null);
 
@@ -130,6 +138,9 @@ const App = () => {
       setClients(data.clients    || []);
       setActivities(data.activities || []);
       setExpenses(data.expenses  || []);
+      setInvoices(data.invoices || []);
+      setSupplierRules(data.supplierRules || {});
+      setCategories(data.categories || {});
       setStudio(data.studio    || window.APP_DATA.user);
       setFiscal(data.fiscal    || window.APP_DATA.fiscal);
       setLoaded(true);
@@ -142,12 +153,14 @@ const App = () => {
     setClients(d.clients);
     setActivities(d.activities);
     setExpenses(d.expenses);
+    setInvoices([]);
     setStudio(d.user);
     setFiscal(d.fiscal);
     if (window.api?.db) {
       await window.api.db.saveCollection('clients', d.clients);
       await window.api.db.saveCollection('activities', d.activities);
       await window.api.db.saveCollection('expenses', d.expenses);
+      await window.api.db.saveCollection('invoices', []);
       await window.api.db.saveKV('studio', d.user);
       await window.api.db.saveKV('fiscal', d.fiscal);
     }
@@ -160,12 +173,14 @@ const App = () => {
     setClients([]);
     setActivities([]);
     setExpenses([]);
+    setInvoices([]);
     setStudio(emptyStudio);
     setFiscal(emptyFiscal);
     if (window.api?.db) {
       await window.api.db.saveCollection('clients', []);
       await window.api.db.saveCollection('activities', []);
       await window.api.db.saveCollection('expenses', []);
+      await window.api.db.saveCollection('invoices', []);
       await window.api.db.saveKV('studio', emptyStudio);
       await window.api.db.saveKV('fiscal', emptyFiscal);
     } else {
@@ -179,8 +194,15 @@ const App = () => {
   useEffect(() => { if (loaded && !showWelcome) dbSave('clients',    clients); }, [clients, loaded, showWelcome]);
   useEffect(() => { if (loaded && !showWelcome) dbSave('activities', activities); }, [activities, loaded, showWelcome]);
   useEffect(() => { if (loaded && !showWelcome) dbSave('expenses',   expenses); }, [expenses, loaded, showWelcome]);
+  useEffect(() => { if (loaded && !showWelcome) dbSave('invoices', invoices); }, [invoices, loaded, showWelcome]);
+  useEffect(() => { if (loaded && !showWelcome) dbSave('supplierRules', supplierRules); }, [supplierRules, loaded, showWelcome]);
+  useEffect(() => { if (loaded && !showWelcome) dbSave('categories', categories); }, [categories, loaded, showWelcome]);
   useEffect(() => { if (loaded && !showWelcome && studio) dbSave('studio', studio); }, [studio, loaded, showWelcome]);
   useEffect(() => { if (loaded && !showWelcome && fiscal) dbSave('fiscal', fiscal); }, [fiscal, loaded, showWelcome]);
+  useEffect(() => { window.__clients = clients; }, [clients]);
+  // Every screen reads window.CATEGORY_RULES; point it at the user's edited
+  // rules merged over the defaults, so one assignment reaches all of them.
+  useEffect(() => { window.CATEGORY_RULES = window.effectiveCategories(categories); }, [categories]);
 
   const currentMonthKey = monthKey(year, month);
   const navMonth = (delta) => {
@@ -257,10 +279,68 @@ const App = () => {
     window.showToast('Spesa eliminata', 'warning');
   };
 
+  const handleSaveInvoice = (updated) => {
+    setInvoices(list => list.map(i => (i.id === updated.id ? updated : i)));
+    setEditingInvoice(null);
+    window.showToast('Fattura aggiornata', 'success');
+  };
+
+  // patch is a function of the invoice, so a bulk edit can depend on the record
+  // it is changing — a category implies a different cespite decision per amount.
+  // Renaming or deleting a category has to move the documents that carry its
+  // name, or they would point at a category that no longer exists. Their fiscal
+  // VALUES are deliberately left untouched: a rename is a relabelling, and a
+  // reassignment should not silently restate a figure. Use "Riapplica regole"
+  // for that, deliberately.
+  const handleSaveCategories = (table, moves) => {
+    const names = Object.keys(moves || {});
+    if (names.length) {
+      setInvoices(list => list.map(i => (i.fiscal && moves[i.fiscal.category])
+        ? { ...i, fiscal: { ...i.fiscal, category: moves[i.fiscal.category] } } : i));
+      setExpenses(list => list.map(e => moves[e.category]
+        ? { ...e, category: moves[e.category] } : e));
+    }
+    setCategories(table);
+    window.showToast(names.length
+      ? t('cat.savedMoved', { n: names.length })
+      : t('cat.saved'), 'success');
+  };
+
+  const handleBulkUpdateInvoices = (ids, patch) => {
+    if (!ids.length) return;
+    setInvoices(list => list.map(i => ids.includes(i.id) ? { ...i, ...patch(i) } : i));
+    window.showToast(t('inv.bulkUpdated', { n: ids.length }), 'success');
+  };
+
+  const handleBulkDeleteInvoices = (ids) => {
+    if (!ids.length) return;
+    setInvoices(list => list.filter(i => !ids.includes(i.id)));
+    window.showToast(t('inv.bulkDeleted', { n: ids.length }), 'info');
+  };
+
+  const handleDeleteInvoice = (id) => {
+    // The confirmation lives in the view, next to the button, exactly as
+    // ClientDetail does it.
+    setInvoices(list => list.filter(i => i.id !== id));
+    window.showToast('Fattura rimossa', 'info');
+  };
+
+  const handleImported = ({ records, supplierRules: rules }) => {
+    // Never overwrite a record already in the ledger: what is stored carries the
+    // user's edited settlement, client link, notes and fiscal treatment, while
+    // `r` is a fresh proposal rebuilt from the XML (P1).
+    const known = new Set(invoices.map(i => i.id));
+    const fresh = records.filter(r => !known.has(r.id));
+    if (fresh.length) setInvoices(list => [...list, ...fresh]);
+    if (rules) setSupplierRules(rules);
+    window.showToast(t('imp.done', { n: fresh.length }), 'success');
+  };
+
   const handleResetData = () => {
     if (!confirm(t('data.resetDesc'))) return;
     const d = window.APP_DATA;
     setClients(d.clients); setActivities(d.activities); setExpenses(d.expenses);
+    setInvoices([]); setSupplierRules({});
     setStudio(d.user); setFiscal(d.fiscal);
     window.showToast('Dati ripristinati ai valori demo', 'info');
   };
@@ -293,7 +373,8 @@ const App = () => {
 
       <div className="app" key={lang}>
         <Sidebar active={view} onNav={handleNav} clientCount={clients.length}
-          expenseCount={expenses.filter(e => e.monthKey === currentMonthKey).length} studio={s} />
+          expenseCount={expenses.filter(e => e.monthKey === currentMonthKey).length}
+          invoiceCount={invoices.length} studio={s} />
         <div className="main">
           <Topbar title={t('nav.' + view) || view} crumb={(() => {
             if (view === 'dashboard') return `${t('dash.hoursThisMonth')} · ${monthName()} ${year}`;
@@ -310,7 +391,8 @@ const App = () => {
           })()}
           />
           {/* Route */}
-          {view === "dashboard" && <Dashboard clients={clients} activities={activities} currentMonthKey={currentMonthKey} onNav={handleNav} />}
+          {view === "dashboard" && <Dashboard clients={clients} activities={activities} expenses={expenses} invoices={invoices}
+            fiscal={fiscal || window.APP_DATA.fiscal} currentMonthKey={currentMonthKey} currentYear={year} onNav={handleNav} />}
           {view === "clients" && (selectedClientId
             ? <ClientDetail client={clients.find(c => c.id === selectedClientId)} activities={activities}
                 currentMonthKey={currentMonthKey}
@@ -324,15 +406,24 @@ const App = () => {
             currentYear={year} currentMonth={month} onNavMonth={navMonth}
             onAddActivity={p => setEditingActivity(p || {})} onEditActivity={a => setEditingActivity(a)}
             onDeleteActivities={handleDeleteActivities} />}
-          {view === "export" && <Export clients={clients} activities={activities} expenses={expenses}
+          {view === "export" && <Export clients={clients} activities={activities} expenses={expenses} invoices={invoices}
             currentMonthKey={currentMonthKey} studio={s}
             currentYear={year} currentMonth={month} onNavMonth={navMonth} />}
           {view === "expenses" && <Expenses clients={clients} expenses={expenses} currentMonthKey={currentMonthKey}
             onAdd={billable => setEditingExpense({ __billable: billable })} onEdit={e => setEditingExpense(e)}
             onDelete={handleDeleteExpense} />}
-          {view === "settings" && <Settings user={s} onSave={d => setStudio(d)} onResetData={handleResetData} />}
+          {view === "invoices" && <Invoices
+            invoices={invoices} clients={clients} expenses={expenses}
+            fiscal={fiscal || window.APP_DATA.fiscal} currentYear={year}
+            onImport={() => setImportOpen(true)}
+            onEdit={setEditingInvoice} onDelete={handleDeleteInvoice}
+          onBulkUpdate={handleBulkUpdateInvoices} onBulkDelete={handleBulkDeleteInvoices} />}
+          {view === "settings" && <Settings user={s} onSave={d => setStudio(d)} onResetData={handleResetData}
+            categories={categories} invoices={invoices} expenses={expenses}
+            onSaveCategories={handleSaveCategories}
+            fiscal={fiscal || window.APP_DATA.fiscal} onSaveFiscal={f => setFiscal(f)} />}
           {view === "taxes" && <Taxes activities={activities} expenses={expenses} fiscal={fiscal || window.APP_DATA.fiscal}
-            clients={clients} studio={s} year={year}
+            clients={clients} studio={s} invoices={invoices} year={year}
             onUpdateFiscal={f => setFiscal(f)} />}
         </div>
       </div>
@@ -371,6 +462,15 @@ const App = () => {
             onSave={handleSaveExpense} onCancel={() => setEditingExpense(null)} onDelete={handleDeleteExpense} />
         )}
       </Modal>
+
+      {editingInvoice && <InvoiceDrawer
+        invoice={editingInvoice} clients={clients}
+        onSave={handleSaveInvoice} onClose={() => setEditingInvoice(null)} />}
+
+      {importOpen && <InvoiceImportWizard
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        onImported={handleImported} />}
 
       <ToastContainer />
 

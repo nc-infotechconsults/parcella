@@ -6,7 +6,7 @@ class AppDBJson {
   constructor(dbPath) {
     this.filePath = dbPath.replace(/\.db$/, '.json');
     this._empty = true;
-    this._data = { clients: [], activities: [], expenses: [], studio: null, fiscal: null };
+    this._data = { clients: [], activities: [], expenses: [], invoices: [], studio: null, fiscal: null, supplierRules: {}, categories: {} };
     this._load();
   }
 
@@ -14,7 +14,9 @@ class AppDBJson {
     try {
       if (fs.existsSync(this.filePath)) {
         this._data = { ...this._data, ...JSON.parse(fs.readFileSync(this.filePath, 'utf-8')) };
-        this._empty = this._data.clients.length === 0 && !this._data.studio;
+        this._empty = this._data.clients.length === 0
+          && (this._data.invoices || []).length === 0
+          && !this._data.studio;
       }
     } catch (e) { console.error('[db-json] load error', e); }
   }
@@ -38,6 +40,10 @@ class AppDBJson {
     this._data[key] = value;
     this._empty = false;
     this._save();
+  }
+
+  getKV(key) {
+    return this._data[key] !== undefined ? this._data[key] : null;
   }
 
   nextDocNumber(year) {
@@ -78,6 +84,7 @@ class AppDBJson {
       clients:    this._data.clients.length,
       activities: this._data.activities.length,
       expenses:   this._data.expenses.length,
+      invoices:   (this._data.invoices || []).length,
       sizeBytes:  size,
     };
   }

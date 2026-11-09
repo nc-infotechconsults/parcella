@@ -4,6 +4,7 @@ window.AppStorage = {
     clients:    'ts_clients',
     activities: 'ts_activities',
     expenses:   'ts_expenses',
+    invoices:   'ts_invoices',
     studio:     'ts_studio',
     fiscal:     'ts_fiscal',
   },

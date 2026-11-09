@@ -45,8 +45,10 @@ correct treatment can change.
 
 **P3 — Reverse charge is one document, not two.** A TD16–TD19 self-invoice
 appears in *both* the active and the passive export. It is a single passive
-record whose IVA is simultaneously a debito and a credito, netting to zero. Its
-imponibile is a cost and never revenue.
+record whose IVA is simultaneously a debito and a credito. Its imponibile is a
+cost and never revenue. The two sides cancel when the purchase is fully
+detraibile; where `vatDetractPct < 100` the non-detraibile share correctly
+remains as a real liability rather than vanishing.
 
 **P4 — Two dates, two jobs.** IVA is placed by document date. Ricavi and costi
 for IRPEF are placed by settlement (cassa) date.
@@ -227,7 +229,7 @@ verified by eyeballing a KPI.
 | Ricavi | Σ active `imponibile × sign`, cassa rivalsa included, reverse-charge excluded | only (client, month) pairs with **no** linked active invoice |
 | IVA a debito | Σ active `vatSummary.imposta`, by **document date** | — |
 | IVA a credito | Σ passive `imposta × vatDetractPct`, by **document date** | — |
-| Reverse charge | `imposta` added to debito **and** credito → nets to zero; both rows displayed so figures match the registri | — |
+| Reverse charge | `imposta` added to debito **and** credito → cancels at full detraction; the non-detraibile share stays a liability. Both rows displayed so figures match the registri | — |
 | Costi | passive `imponibile × deductPct` by **settlement date**, or the year's quota if cespite | manual non-billable expenses, invoice-backed ones excluded |
 | Ritenuta | Σ `withholding.importo` on **settled** active invoices | — |
 

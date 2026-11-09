@@ -48,16 +48,12 @@ async function setPassphrase(pw) {
   if (keytar) await keytar.setPassword(KEYTAR_SERVICE, KEYTAR_ACCOUNT, pw);
 }
 
-// Load DB module with SQLite fallback
-let AppDB;
-try {
-  AppDB = require('./db');
-  AppDB._type = 'sqlite';
-} catch (e) {
-  console.warn('[main] better-sqlite3 unavailable, using JSON fallback:', e.message);
-  AppDB = require('./db-json');
-  AppDB._type = 'json';
-}
+// Load DB module with SQLite fallback. The guard lives in db-open because the
+// native addon throws at CONSTRUCTION, not at require — see that file.
+const { openDatabase } = require('./db-open');
+
+const { collectFiles, buildManifest, finalizeRecords, archiveFileName, archiveYear } = require('./invoice-import');
+const { resolveDbPath } = require('./db-path');
 
 let win;
 let db;
@@ -111,8 +107,8 @@ function oneDrivePath() {
 
 function createWindow() {
   const userData = app.getPath('userData');
-  const dbPath = path.join(userData, 'timesheet.db');
-  db = new AppDB(dbPath);
+  const dbPath = resolveDbPath(userData, process.env);
+  db = openDatabase(dbPath);
 
   win = new BrowserWindow({
     width: 1440,
@@ -152,10 +148,80 @@ function createWindow() {
   ipcMain.handle('db:getDocCounter',   (_, { year }) => db.getDocCounter(year));
   ipcMain.handle('db:resetDocCounter', (_, { year }) => { db.resetDocCounter(year); return true; });
 
+  // ── Fatture elettroniche ─────────────────────────────────────────
+  const invoiceArchiveDir = path.join(userData, 'invoices');
+
+  function studioIdentity() {
+    const studio = db.getKV('studio') || {};
+    return [studio.piva, studio.cf].filter(Boolean);
+  }
+
+  ipcMain.handle('invoices:chooseSource', async () => {
+    const result = await dialog.showOpenDialog(win, {
+      title: 'Seleziona le fatture da importare',
+      filters: [{ name: 'Fatture elettroniche', extensions: ['xml', 'p7m', 'zip'] }],
+      properties: ['openFile', 'openDirectory', 'multiSelections'],
+    });
+    return result.canceled ? null : result.filePaths;
+  });
+
+  ipcMain.handle('invoices:scan', (_, { paths }) => {
+    const { invoices, clients, supplierRules, categories } = db.loadAll();
+    const files = collectFiles(paths);
+    return buildManifest({
+      files,
+      existing: {
+        dedupKeys: invoices.map(i => i.dedupKey),
+        hashes: invoices.map(i => i.src && i.src.sha256).filter(Boolean),
+      },
+      clients,
+      supplierRules,
+      categories,
+      studioIds: studioIdentity(),
+    });
+  });
+
+  ipcMain.handle('invoices:commit', (_, { items, decisions }) => {
+    const { supplierRules } = db.loadAll();
+    const result = finalizeRecords({ items, decisions, supplierRules });
+
+    // Archive the originals so the ledger survives the Downloads folder
+    // being emptied, and so the detail view can always show the document.
+    for (const rec of result.records) {
+      const item = items.find(i => i.id === rec.id);
+      if (!item || !item.file.sourcePath) continue;
+      try {
+        // Everything filesystem-related is inside the try, mkdirSync included:
+        // a directory that cannot be created must cost this record its archive
+        // copy, never the whole batch's invoice data.
+        const yearDir = path.join(invoiceArchiveDir, archiveYear(rec.date));
+        fs.mkdirSync(yearDir, { recursive: true });
+        // archiveFileName keeps a crafted zip-entry name from steering the
+        // write path, and gives the copy the extension of the container whose
+        // bytes we are about to copy — rec.src.fileName is the UNWRAPPED
+        // document, so naming the copy after it left .p7m and .zip originals
+        // saved as '.xml' and unreadable. Tested in tests/test-invoice-import.js.
+        const dest = path.join(yearDir, `${rec.src.sha256.slice(0, 8)}_${archiveFileName(rec.src.fileName, item.file.sourcePath)}`);
+        if (!fs.existsSync(dest)) fs.copyFileSync(item.file.sourcePath, dest);
+        rec.src.archivePath = dest;
+      } catch (err) {
+        rec.src.archivePath = null;
+        rec.notes = [rec.notes, `Archiviazione non riuscita: ${err.message}`].filter(Boolean).join(' — ');
+      }
+    }
+    return result;
+  });
+
+  ipcMain.handle('invoices:openOriginal', (_, archivePath) => {
+    if (!archivePath || !fs.existsSync(archivePath)) return false;
+    shell.showItemInFolder(archivePath);
+    return true;
+  });
+
   ipcMain.handle('db:getInfo', () => {
     const icloud = iCloudPath();
     const dropbox = dropboxPath();
-    return { dbPath, dbType: AppDB._type || 'unknown', stats: db.stats(), icloud, dropbox };
+    return { dbPath, dbType: db._type || 'unknown', stats: db.stats(), icloud, dropbox };
   });
 
   // ── Export / Import ──────────────────────────────────────────────

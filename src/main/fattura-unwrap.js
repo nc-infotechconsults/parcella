@@ -1,0 +1,186 @@
+// Unwraps the containers the Agenzia delle Entrate hands out: plain .xml,
+// CAdES-signed .xml.p7m, and .zip bundles. Implemented on Node built-ins so
+// no native or third-party archive dependency enters the packaging pipeline.
+const zlib = require('zlib');
+
+// ── .p7m ────────────────────────────────────────────────────────────────
+// A FatturaPA p7m is a CMS SignedData whose eContent is the XML. We walk the
+// DER looking for the payload rather than verifying the signature: validity
+// is the SDI's job, ours is only to read what was filed.
+
+// BER, not just DER: a real Agenzia delle Entrate .p7m opens `30 80` —
+// indefinite length — and carries its eContent as a CONSTRUCTED OCTET STRING
+// (tag 0x24) split into 1000-byte chunks. Both are ordinary output from a
+// streaming CAdES signer, and neither appears in definite-length DER.
+function readTLV(buf, pos, limit) {
+  if (pos + 2 > limit) return null;
+  const tag = buf[pos];
+  const lenByte = buf[pos + 1];
+  let headerLen = 2;
+  let len;
+  let indefinite = false;
+
+  if (lenByte === 0x80) {
+    indefinite = true;                 // runs until a matching end-of-contents
+    len = -1;
+  } else if (lenByte & 0x80) {
+    const count = lenByte & 0x7f;
+    if (count === 0 || pos + 2 + count > limit) return null;
+    len = 0;
+    for (let i = 0; i < count; i++) len = (len * 256) + buf[pos + 2 + i];
+    headerLen = 2 + count;
+  } else {
+    len = lenByte;
+  }
+
+  const start = pos + headerLen;
+  if (!indefinite && start + len > limit) return null;
+  return {
+    tag, start, len, indefinite,
+    end: indefinite ? limit : start + len,
+    constructed: (tag & 0x20) !== 0,
+  };
+}
+
+const XML_HEAD = Buffer.from('<?xml', 'utf-8');
+const isEOC = (buf, pos) => buf[pos] === 0x00 && buf[pos + 1] === 0x00;
+
+// Concatenates the primitive OCTET STRING chunks inside a constructed one.
+function joinOctets(buf, start, limit, depth) {
+  if (depth > 8) return Buffer.alloc(0);
+  const parts = [];
+  let pos = start;
+  while (pos + 1 < limit) {
+    if (isEOC(buf, pos)) break;                    // the chunk run ends here
+    const tlv = readTLV(buf, pos, limit);
+    if (!tlv) break;
+    if (tlv.tag === 0x04) parts.push(buf.subarray(tlv.start, tlv.end));
+    else if (tlv.tag === 0x24) parts.push(joinOctets(buf, tlv.start, tlv.end, depth + 1));
+    else break;                                    // anything else is not our payload
+    if (tlv.indefinite) break;
+    pos = tlv.end;
+  }
+  return Buffer.concat(parts);
+}
+
+function findXmlInDER(buf, start, limit, depth) {
+  if (depth === undefined) { start = 0; limit = buf.length; depth = 0; }
+  if (depth > 16) return null;
+  let pos = start;
+  while (pos + 1 < limit) {
+    if (isEOC(buf, pos)) { pos += 2; continue; }
+    const tlv = readTLV(buf, pos, limit);
+    if (!tlv) return null;
+
+    if (tlv.tag === 0x04) {
+      const body = buf.subarray(tlv.start, tlv.end);
+      const i = body.indexOf(XML_HEAD);
+      if (i !== -1) return body.subarray(i).toString('utf-8');
+    } else if (tlv.tag === 0x24) {
+      const joined = joinOctets(buf, tlv.start, tlv.end, 0);
+      const i = joined.indexOf(XML_HEAD);
+      if (i !== -1) return joined.subarray(i).toString('utf-8');
+    } else if (tlv.constructed) {
+      const found = findXmlInDER(buf, tlv.start, tlv.end, depth + 1);
+      if (found) return found;
+    }
+
+    // An indefinite element's end is only known by scanning its children, which
+    // the recursion above has already done; its siblings lie past a boundary we
+    // cannot cheaply compute, and the search covered the rest of the buffer.
+    if (tlv.indefinite) return null;
+    pos = tlv.end;
+  }
+  return null;
+}
+
+function extractP7M(buffer) {
+  let buf = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer);
+  // Some exports ship the CMS base64-encoded (optionally PEM-armoured).
+  if (buf[0] !== 0x30) {
+    const text = buf.toString('utf-8').replace(/-----[^-]+-----/g, '').replace(/\s+/g, '');
+    if (/^[A-Za-z0-9+/=]+$/.test(text) && text.length > 32) {
+      buf = Buffer.from(text, 'base64');
+    }
+  }
+  const xml = findXmlInDER(buf);
+  // findXmlInDER already returns exactly the DER-delimited OCTET STRING payload
+  // starting at '<?xml' — no further trimming. Cutting at the last '>' would
+  // drop a trailing newline that is genuine file content, and Task 6 hashes
+  // this string as a dedup guard: the same document arriving once as .xml and
+  // once as .xml.p7m must hash identically.
+  if (xml) return xml;
+  throw new Error('Contenuto XML non trovato nel file .p7m');
+}
+
+// ── .zip ────────────────────────────────────────────────────────────────
+
+const EOCD_SIG = 0x06054b50;
+const CEN_SIG = 0x02014b50;
+
+function readZip(buffer) {
+  const buf = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer);
+  let eocd = -1;
+  for (let i = buf.length - 22; i >= 0; i--) {
+    if (buf.readUInt32LE(i) === EOCD_SIG) { eocd = i; break; }
+  }
+  if (eocd < 0) throw new Error('Archivio ZIP non valido');
+
+  const count = buf.readUInt16LE(eocd + 10);
+  let pos = buf.readUInt32LE(eocd + 16);
+  const entries = [];
+
+  for (let i = 0; i < count; i++) {
+    if (pos + 46 > buf.length || buf.readUInt32LE(pos) !== CEN_SIG) throw new Error('Archivio ZIP non valido');
+    const method = buf.readUInt16LE(pos + 10);
+    const compSize = buf.readUInt32LE(pos + 20);
+    const nameLen = buf.readUInt16LE(pos + 28);
+    const extraLen = buf.readUInt16LE(pos + 30);
+    const commentLen = buf.readUInt16LE(pos + 32);
+    const localOffset = buf.readUInt32LE(pos + 42);
+    const name = buf.subarray(pos + 46, pos + 46 + nameLen).toString('utf-8');
+
+    // localOffset and compSize come from the archive itself: untrusted. Without
+    // these guards a corrupt offset reaches readUInt16LE as a raw RangeError and
+    // a corrupt size reaches zlib, so the caller sees a Node internal message
+    // instead of the archive error this module promises.
+    if (localOffset + 30 > buf.length) throw new Error('Archivio ZIP non valido');
+    const localNameLen = buf.readUInt16LE(localOffset + 26);
+    const localExtraLen = buf.readUInt16LE(localOffset + 28);
+    const dataStart = localOffset + 30 + localNameLen + localExtraLen;
+    if (dataStart + compSize > buf.length) throw new Error('Archivio ZIP non valido');
+    const raw = buf.subarray(dataStart, dataStart + compSize);
+
+    if (!name.endsWith('/')) {
+      entries.push({ name, data: method === 8 ? zlib.inflateRawSync(raw) : raw });
+    }
+    pos += 46 + nameLen + extraLen + commentLen;
+  }
+  return entries;
+}
+
+// ── Dispatch ────────────────────────────────────────────────────────────
+
+const isXmlName = n => /\.xml$/i.test(n);
+
+// Normalize here, at the one place every container converges: a BOM breaks the
+// XML parser, and leaving it on only the plain-.xml path would make the same
+// document hash two different ways depending on how it arrived.
+const stripBOM = s => (s.charCodeAt(0) === 0xFEFF ? s.slice(1) : s);
+
+function unwrap(fileName, buffer) {
+  const lower = String(fileName).toLowerCase();
+  if (lower.endsWith('.p7m')) {
+    return [{ name: fileName.replace(/\.p7m$/i, ''), xml: stripBOM(extractP7M(buffer)) }];
+  }
+  if (lower.endsWith('.zip')) {
+    return readZip(buffer)
+      .filter(e => isXmlName(e.name) || /\.xml\.p7m$/i.test(e.name))
+      .map(e => (/\.p7m$/i.test(e.name)
+        ? { name: e.name.replace(/\.p7m$/i, ''), xml: stripBOM(extractP7M(e.data)) }
+        : { name: e.name, xml: stripBOM(e.data.toString('utf-8')) }));
+  }
+  return [{ name: fileName, xml: stripBOM(Buffer.isBuffer(buffer) ? buffer.toString('utf-8') : String(buffer)) }];
+}
+
+module.exports = { unwrap, extractP7M, readZip };
