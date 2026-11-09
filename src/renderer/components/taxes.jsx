@@ -390,6 +390,13 @@ const Taxes = ({ activities, expenses, fiscal, clients, studio, invoices, year: 
 
   return (
     <div className="content">
+      {/* Uno scadenzario salvato che non regge più ricade sul preset: chi guarda
+          le scadenze deve saperlo, non solo chi apre Impostazioni. */}
+      {tax.schemeWarning && (
+        <div style={{ padding: "10px 12px", marginBottom: 12, background: "oklch(0.97 0.05 80)", borderRadius: 4, fontSize: 12.5 }}>
+          {tax.schemeWarning}
+        </div>
+      )}
       {/* Hero KPIs */}
       <div className="kpi-grid" style={{ gridTemplateColumns: "repeat(5, 1fr)" }}>
         <div className="kpi" style={{ borderLeft: "3px solid var(--accent)" }}>

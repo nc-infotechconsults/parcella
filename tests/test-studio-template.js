@@ -23,3 +23,15 @@ test('the studio template ships no placeholder fiscal identity', () => {
   assert.equal(normalizeId(u.piva), '', 'piva del template deve essere vuota');
   assert.equal(normalizeId(u.cf), '', 'cf del template deve essere vuoto');
 });
+
+// Le spunte "Versato" non sono più un canale di versamento: la migrazione le
+// trasforma in righe versate. Un modello che le porta ancora regalerebbe a chi
+// parte da zero un acconto IRPEF da 11.360 € segnato come pagato.
+test('il modello fiscale non porta spunte Versato', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer', 'data.js'), 'utf-8');
+  const ctx = { window: {} };
+  vm.createContext(ctx);
+  vm.runInContext(src, ctx);
+  const keys = Object.keys(ctx.window.APP_DATA.fiscal).filter(k => /Paid$|^ivaQ1Amount$/.test(k));
+  assert.deepEqual(keys, []);
+});
