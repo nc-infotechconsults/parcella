@@ -53,6 +53,7 @@ async function setPassphrase(pw) {
 const { openDatabase } = require('./db-open');
 
 const { collectFiles, buildManifest, finalizeRecords, safeArchiveName, archiveYear } = require('./invoice-import');
+const { resolveDbPath } = require('./db-path');
 
 let win;
 let db;
@@ -106,7 +107,7 @@ function oneDrivePath() {
 
 function createWindow() {
   const userData = app.getPath('userData');
-  const dbPath = path.join(userData, 'timesheet.db');
+  const dbPath = resolveDbPath(userData, process.env);
   db = openDatabase(dbPath);
 
   win = new BrowserWindow({
