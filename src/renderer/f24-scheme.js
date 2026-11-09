@@ -446,8 +446,98 @@
     }
   }
 
+  // ── Migrazione ───────────────────────────────────────────────────────────
+  // Porta i dati di prima nello scadenzario senza cambiarne i numeri. Pura e
+  // idempotente: proposalsFor(anno) dà le proposte che computeTaxes calcola con
+  // lo storico vuoto, e serve per gli importi delle spunte e per riconoscere le
+  // righe vecchie. Non salva nessuno schema: finché l'utente non lo tocca vale
+  // il preset, così un cambio di cassa continua a cambiare le scadenze.
+  const FLAG_SLOTS = {
+    irpefAcconto1Paid: 'irpef/acc1', irpefAcconto2Paid: 'irpef/acc2',
+    cassaAcconto1Paid: 'contributi/acc1', cassaAcconto2Paid: 'contributi/acc2',
+    ivaQ1Paid: 'iva/q1', ivaQ2Paid: 'iva/q2', ivaQ3Paid: 'iva/q3', ivaQ4Paid: 'iva/q4',
+  };
+  const FLAG_KEYS = [...Object.keys(FLAG_SLOTS), 'ivaQ1Amount'];
+
+  function migrateFiscal({ fiscal, studio, proposalsFor, now }) {
+    const before = JSON.stringify(fiscal || {});
+    const f = JSON.parse(before);
+    const log = [];
+    const scheme = activeScheme(f, studio).scheme;
+    const cache = {};
+    const proposals = y => (cache[y] = cache[y] || (proposalsFor ? proposalsFor(y) || [] : []));
+    let history = Array.isArray(f.f24History) ? f.f24History : [];
+    const taken = () => new Set(history.filter(h => h.slot).map(h => h.slot));
+
+    // 1. Tributo dal codice, letto come lo usava l'app di prima.
+    history = history.map(h => (h.tributo !== undefined ? h
+      : { ...h, tributo: inferTributo(h.code, scheme, { legacy: true }) }));
+
+    // 2. Slot alle righe che cadono nella data di una scadenza.
+    const legacyOf = p => {
+      const sp = slotParts(p.slot);
+      return sp ? LEGACY_CODES[`${sp.tributo}/${sp.riga}`] : undefined;
+    };
+    history = history.map(h => {
+      if (h.slot) return h;
+      const y = Number(String(h.date || '').slice(0, 4));
+      if (!y) return h;
+      const used = taken();
+      let cands = [...proposals(y - 1), ...proposals(y)].filter(p => !used.has(p.slot) && p.date === h.date
+        && (String(h.code) === String(p.code) || String(h.code) === legacyOf(p)));
+      // Il tributo, se già noto, decide prima del codice: nel preset nuovo il
+      // 3801 è l'addizionale regionale, ma una riga "Saldo INPS" scritta con il
+      // 3801 di prima è un saldo contributi.
+      if (h.tributo && cands.some(p => p.tributo === h.tributo)) cands = cands.filter(p => p.tributo === h.tributo);
+      let pick = cands.length === 1 ? cands[0] : null;
+      if (cands.length > 1) {
+        const isSaldo = /saldo/i.test(String(h.desc || ''));
+        pick = cands.find(p => {
+          const sp = slotParts(p.slot);
+          return isSaldo ? (sp.riga === 'saldo' && sp.anno === y - 1) : (sp.riga !== 'saldo' && sp.anno === y);
+        }) || null;
+        if (pick) log.push(`"${h.desc}" del ${h.date}: scadenza ${pick.slot} scelta dalla descrizione`);
+      }
+      // Senza scadenza la migrazione non inventa l'anno di competenza: con
+      // l'anno della data, un saldo dell'anno prima versato a giugno diventava
+      // un acconto di quest'anno e ne riduceva il saldo. Prima dello
+      // scadenzario una riga così non toccava i saldi, e così resta.
+      if (!pick) return h;
+      return { ...h, slot: pick.slot, tributo: h.tributo || pick.tributo, anno: slotParts(pick.slot).anno };
+    });
+
+    // 3. Spunte "Versato" → righe registrate con l'importo di oggi.
+    const flagYear = Number(f.year) || (now ? new Date(now).getFullYear() : new Date().getFullYear());
+    const ids = new Set(history.map(h => h.id));
+    for (const [flag, key] of Object.entries(FLAG_SLOTS)) {
+      if (!f[flag]) continue;
+      const slot = `${key}/${flagYear}`;
+      const [tid] = key.split('/');
+      const inScheme = schemeSlots(scheme, tid, flagYear).some(x => x.slot === slot);
+      if (!inScheme) { log.push(`${flag}: lo schema non ha la scadenza ${slot}, spunta scartata`); continue; }
+      if (taken().has(slot)) { log.push(`${flag}: ${slot} è già registrata, spunta assorbita`); continue; }
+      const p = proposals(flagYear).find(x => x.slot === slot);
+      const amount = flag === 'ivaQ1Paid' && f.ivaQ1Amount ? amountOf(f.ivaQ1Amount) : (p ? amountOf(p.amount) : 0);
+      if (!p || !(amount > 0)) { log.push(`${flag}: nessun importo per ${slot}, spunta scartata`); continue; }
+      let id = `f24_${p.date}_${p.code}`;
+      for (let n = 2; ids.has(id); n++) id = `f24_${p.date}_${p.code}_${n}`;
+      ids.add(id);
+      history.push({
+        id, date: p.date, code: p.code, desc: p.desc, amount: round2(amount), status: 'paid',
+        tributo: p.tributo, slot, anno: flagYear, migratedFrom: flag,
+      });
+      log.push(`${flag}: diventata la riga ${slot} da ${round2(amount)} €`);
+    }
+    FLAG_KEYS.forEach(k => { delete f[k]; });
+
+    f.f24History = history.slice().sort((a, b) => String(a.date).localeCompare(String(b.date)));
+    const changed = JSON.stringify(f) !== before;
+    return { fiscal: changed ? f : JSON.parse(before), log, changed };
+  }
+
   return {
     SCHEME_BASES, SCHEME_KINDS, SCHEME_SEZIONI, LEGACY_CODES,
+    migrateFiscal,
     validateScheme,
     presetIdFor, presetScheme, activeScheme, schemeSlots, inferTributo, kindOf,
     scheduleFromScheme, amountOf,
