@@ -69,7 +69,9 @@ test('a stale saved estimate does not hide a liability the invoices show', () =>
     f24History: [{ id: 'f5', date: '2026-08-20', code: '6031', desc: 'IVA 2° trim', amount: 0, status: 'estimated' }],
   };
   const res = run(fiscal, [activeInvoice({ id: 'a3', date: '2026-05-10', monthKey: '2026-05' })]);
-  const q2 = res.f24All.filter(f => f.date === '2026-08-20' && f.code === '6031');
+  // Il 2° trimestre si versa con il 6032 (Appendice A della spec); la riga
+  // stimata salvata porta ancora il 6031 che usava l'app di prima.
+  const q2 = res.f24All.filter(f => f.date === '2026-08-20' && (f.code === '6031' || f.code === '6032'));
   assert.equal(q2.length, 1);
   assert.ok(q2[0].amount > 0, 'the computed instalment must replace the stale zero, got ' + q2[0].amount);
 });
