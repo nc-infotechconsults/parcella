@@ -76,6 +76,11 @@ function taxLiability(fy, fiscal, tipo, contributiVersati) {
   const addCom = redditoImpIrpef * aliquote.addComPct / 100;
   const irpefLordaTot = irpefLorda + addReg + addCom;
 
+  // Le ritenute d'acconto subite si scomputano dall'IRPEF e da nient'altro: le
+  // addizionali restano dovute per intero e si pagano con codici propri. Prima
+  // le ritenute si toglievano dal totale IRPEF + addizionali, e un'eccedenza di
+  // ritenute sull'IRPEF faceva sparire anche le addizionali.
+  const irpefSola = r2(Math.max(0, irpefLorda - ritenuta));
   return {
     aliquote, brackets,
     compensi, costiDeducibili, costiEsercizio, quoteAmmortamento, ritenuta,
@@ -83,8 +88,9 @@ function taxLiability(fy, fiscal, tipo, contributiVersati) {
     reddNettoLordoCassa,
     contribCassa: r2(contribCassa), contribFisso, contribVar, irapBase, irap,
     redditoImpIrpef, irpefLorda, addReg, addCom, irpefLordaTot,
-    irpefNetta: r2(Math.max(0, irpefLordaTot - ritenuta)),
-    ritenutaCredito: Math.max(0, ritenuta - irpefLordaTot),
+    irpefSola, addRegDovuta: r2(addReg), addComDovuta: r2(addCom),
+    irpefNetta: r2(irpefSola + addReg + addCom),
+    ritenutaCredito: Math.max(0, ritenuta - irpefLorda),
   };
 }
 window.taxLiability = taxLiability;
