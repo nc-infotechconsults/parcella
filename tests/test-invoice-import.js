@@ -260,3 +260,66 @@ test('archiveYear falls back rather than naming a folder from undefined', () => 
 test('buildManifest refuses to run without the studio identity', () => {
   assert.throws(() => buildManifest(base({ files: [file('passiva-td04-nota-credito.xml')], studioIds: [] })), /studioIds/);
 });
+
+// The whole-batch guard: an identity that matches nothing used to let every
+// document fall through classify's "neither party" branch, which defaults to
+// passive. A folder of issued invoices was then booked as costs, silently.
+test('a batch that never involves the studio aborts instead of booking it all as passive', () => {
+  assert.throws(() => buildManifest(base({
+    files: [file('attiva-td01-ritenuta-cassa.xml'), file('passiva-td01-multirate.xml')],
+    studioIds: ['P.IVA 09876543210', 'RNLMRC85A01F205X'],
+  })), /studioMismatch/);
+});
+
+test('a batch with nothing readable in it reports skipped files, not an identity mismatch', () => {
+  const m = buildManifest(base({
+    files: [{ sourcePath: '/tmp/vuoto.xml', name: 'vuoto.xml', buffer: Buffer.from('non xml', 'utf-8') }],
+  }));
+  assert.equal(m.items.length, 0);
+  assert.equal(m.skipped.length, 1);
+});
+
+// The archive round trip. The archiver copies the ORIGINAL container's bytes,
+// but it used to name the copy after the UNWRAPPED document — src.fileName is
+// the inner name, '.p7m' and the zip's own name stripped off. unwrap dispatches
+// on the extension, so a CAdES container saved as '.xml' went straight to the
+// XML parser: 22 of 81 archived documents could not be read back.
+test('an archived container keeps the extension that makes it readable again', () => {
+  const { unwrap } = require('../src/main/fattura-unwrap');
+  const { archiveFileName } = require('../src/main/invoice-import');
+  const { buildP7M, buildZip } = require('./helpers/containers');
+  const xml = fixtures.read('attiva-td01-ritenuta-cassa.xml');
+
+  const containers = [
+    ['IT05165640755_0JILg.xml.p7m', buildP7M(xml)],
+    ['fatture-ottobre.zip', buildZip([{ name: 'IT05165640755_0JILg.xml', data: Buffer.from(xml, 'utf-8') }])],
+    ['IT05165640755_0JILg.xml', Buffer.from(xml, 'utf-8')],
+  ];
+
+  for (const [sourceName, bytes] of containers) {
+    const [part] = unwrap(sourceName, bytes);
+    const archived = archiveFileName(part.name, `/Users/x/Downloads/${sourceName}`);
+    // What the archiver writes is the container's bytes under `archived`.
+    const [again] = unwrap(archived, bytes);
+    assert.equal(again.xml, part.xml, `${sourceName} archiviato come ${archived}`);
+  }
+});
+
+test('archiveFileName names the copy after what is inside it, and still contains traversal', () => {
+  const path = require('path');
+  const { archiveFileName } = require('../src/main/invoice-import');
+  // The inner document name identifies which invoice the copy was archived for;
+  // the container extension says how to open it.
+  assert.equal(archiveFileName('IT05165640755_0JILg.xml', '/d/IT05165640755_0JILg.xml.p7m'), 'IT05165640755_0JILg.xml.p7m');
+  assert.equal(archiveFileName('IT05165640755_0JILg.xml', '/d/export-ottobre.zip'), 'IT05165640755_0JILg.xml.zip');
+  assert.equal(archiveFileName('IT05165640755_0JILg.xml', '/d/IT05165640755_0JILg.xml'), 'IT05165640755_0JILg.xml');
+  // A zip entry can carry a path of its own, and its name reaches this function.
+  assert.equal(archiveFileName('sub/dir/fattura.xml', '/d/export.zip'), 'fattura.xml.zip');
+  assert.equal(archiveFileName('../../../../etc/passwd', '/d/export.zip'), 'passwd.zip');
+  for (const inner of ['../../../x.xml', '..\\..\\evil.xml', '', null]) {
+    const dest = path.join('/archive', '2026', 'deadbeef_' + archiveFileName(inner, '/d/export.zip'));
+    assert.ok(dest.startsWith(path.join('/archive', '2026') + path.sep), `uscita dall'archivio: ${inner}`);
+  }
+  // No source path to go by: the name must still be safe and unchanged.
+  assert.equal(archiveFileName('IT05165640755_0JILg.xml', null), 'IT05165640755_0JILg.xml');
+});

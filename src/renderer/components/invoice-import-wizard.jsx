@@ -35,7 +35,9 @@ const InvoiceImportWizard = ({ open, onClose, onImported }) => {
       setDecisions(initial);
       setStep(2);
     } catch (err) {
-      setError(/studioIds/.test(err.message) ? t('imp.noStudio') : err.message);
+      setError(/studioIds/.test(err.message) ? t('imp.noStudio')
+        : /studioMismatch/.test(err.message) ? t('imp.studioMismatch')
+        : err.message);
     } finally {
       setBusy(false);
     }

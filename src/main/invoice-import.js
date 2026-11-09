@@ -74,6 +74,8 @@ function buildManifest({ files, existing, clients, supplierRules, studioIds, cat
   const items = [];
   const skipped = [];
   let duplicati = 0;
+  let classified = 0;
+  let studioSeen = 0;
 
   for (const f of files || []) {
     let unwrapped;
@@ -104,6 +106,9 @@ function buildManifest({ files, existing, clients, supplierRules, studioIds, cat
           skipped.push({ file: part.name || f.name, reason: err.message });
           continue;
         }
+
+        classified++;
+        if (cls.studioIsParty) studioSeen++;
 
         const key = dedupKey(doc);
         if (seenKeys.has(key)) { duplicati++; continue; }
@@ -157,6 +162,16 @@ function buildManifest({ files, existing, clients, supplierRules, studioIds, cat
         });
       }
     }
+  }
+
+  // A whole batch in which the studio is a party to nothing means the
+  // configured identity is wrong, not that these are all purchases: every
+  // document would take classify's "neither party" fallback, which defaults to
+  // passive. Booking a folder of issued invoices as costs is worse than
+  // refusing the batch, so this aborts and sends the user to Impostazioni.
+  // Guarded on classified so a batch of unreadable files still reports them.
+  if (classified > 0 && studioSeen === 0) {
+    throw new Error('studioMismatch: nessun documento del lotto riguarda la P.IVA/Codice Fiscale configurati in Impostazioni');
   }
 
   return {
@@ -244,11 +259,26 @@ function safeArchiveName(fileName) {
   return path.basename(String(fileName || '').replace(/[\\]+/g, '/')) || 'fattura.xml';
 }
 
+// The archiver copies the ORIGINAL container's bytes, so the copy has to carry
+// the container's own extension: unwrap dispatches on the filename, and a CAdES
+// or zip container saved as a plain '.xml' goes straight to the XML parser and
+// cannot be read back. The inner document name still leads, so a zip holding
+// several invoices leaves one legibly named copy per record.
+const CONTAINER_EXT = /\.(p7m|zip)$/i;
+
+function archiveFileName(innerName, sourcePath) {
+  const safe = safeArchiveName(innerName);
+  const match = CONTAINER_EXT.exec(String(sourcePath || ''));
+  if (!match) return safe;
+  const ext = match[0].toLowerCase();
+  return safe.toLowerCase().endsWith(ext) ? safe : safe + ext;
+}
+
 function archiveYear(date) {
   return /^\d{4}/.test(String(date)) ? String(date).slice(0, 4) : 'senza-data';
 }
 
 module.exports = {
   collectFiles, buildManifest, finalizeRecords, proposeFiscal, proposeClient,
-  safeArchiveName, archiveYear,
+  safeArchiveName, archiveFileName, archiveYear,
 };

@@ -78,6 +78,10 @@ function classify(doc, studioIds) {
 
   return {
     direction,
+    // The caller checks this across the whole batch: a studio that is a party
+    // to nothing has a wrong identity, and the "neither party" fallback below
+    // would quietly book every document as passive.
+    studioIsParty: studioIsCedente || studioIsCessionario,
     reverseCharge: !!(rule && rule.reverseCharge),
     counterparty: direction === 'active' ? doc.cessionario : doc.cedente,
     tipoDocLabel: rule ? rule.label : null,

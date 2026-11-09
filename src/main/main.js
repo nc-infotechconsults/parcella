@@ -52,7 +52,7 @@ async function setPassphrase(pw) {
 // native addon throws at CONSTRUCTION, not at require — see that file.
 const { openDatabase } = require('./db-open');
 
-const { collectFiles, buildManifest, finalizeRecords, safeArchiveName, archiveYear } = require('./invoice-import');
+const { collectFiles, buildManifest, finalizeRecords, archiveFileName, archiveYear } = require('./invoice-import');
 const { resolveDbPath } = require('./db-path');
 
 let win;
@@ -196,9 +196,12 @@ function createWindow() {
         // copy, never the whole batch's invoice data.
         const yearDir = path.join(invoiceArchiveDir, archiveYear(rec.date));
         fs.mkdirSync(yearDir, { recursive: true });
-        // safeArchiveName keeps a crafted zip-entry name from steering the
-        // write path; it is tested in tests/test-invoice-import.js.
-        const dest = path.join(yearDir, `${rec.src.sha256.slice(0, 8)}_${safeArchiveName(rec.src.fileName)}`);
+        // archiveFileName keeps a crafted zip-entry name from steering the
+        // write path, and gives the copy the extension of the container whose
+        // bytes we are about to copy — rec.src.fileName is the UNWRAPPED
+        // document, so naming the copy after it left .p7m and .zip originals
+        // saved as '.xml' and unreadable. Tested in tests/test-invoice-import.js.
+        const dest = path.join(yearDir, `${rec.src.sha256.slice(0, 8)}_${archiveFileName(rec.src.fileName, item.file.sourcePath)}`);
         if (!fs.existsSync(dest)) fs.copyFileSync(item.file.sourcePath, dest);
         rec.src.archivePath = dest;
       } catch (err) {
