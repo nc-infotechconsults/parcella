@@ -403,8 +403,48 @@
     return { proposals, saldi, acconti, crediti };
   }
 
-  // IVA: Task 5.
-  function scheduleIva() {}
+  // IVA: una riga per periodo, sul saldo di liquidazione con la maggiorazione.
+  // Un periodo dello schema somma le liquidazioni i cui mesi stanno tutti nei
+  // suoi (la stessa regola di `trimestri` in computeTaxes), così una
+  // liquidazione mensile si piega correttamente in uno schema trimestrale.
+  //
+  // L'acconto di dicembre è `pct`% del saldo del periodo indicato, dell'anno
+  // prima e AL LORDO dell'acconto di quell'anno: è il saldo delle liquidazioni,
+  // che degli acconti non sa niente. Quel periodo, quest'anno, si paga al netto
+  // dell'acconto — registrato se c'è, proposto altrimenti — e la maggiorazione
+  // si applica al netto (ipotesi della spec, punto aperto).
+  function scheduleIva(t, o, year, propose, factBySlot, saldi, acconti, crediti) {
+    const sumFor = (periods, months) => round2((periods || [])
+      .filter(p => (p.months || []).every(m => months.includes(m)))
+      .reduce((sum, p) => sum + amountOf(p.saldo), 0));
+    const magg = 1 + amountOf(t.maggiorazionePct) / 100;
+    const periodi = t.periodi || [];
+
+    let accontoValue = 0;
+    const acc = t.acconto;
+    if (acc && acc.metodo === 'storico') {
+      const target = periodi.find(p => p.id === acc.periodo);
+      const base = o.prevIvaPeriods ? sumFor(o.prevIvaPeriods, target ? target.months : []) : amountOf(acc.fallbackPrevYear);
+      let proposto = round2(Math.max(0, base) * amountOf(acc.pct) / 100);
+      if (proposto < amountOf(acc.soglia)) proposto = 0;
+      const row = { ...acc, id: 'acconto' };
+      const fact = factBySlot.get(`${t.id}/acconto/${year}`);
+      accontoValue = fact ? amountOf(fact.amount) : proposto;
+      propose(t, row, proposto, labelFor(row, year));
+    }
+    if (accontoValue) acconti[t.id] = round2(accontoValue);
+
+    for (const per of periodi) {
+      let liquidazione = sumFor(o.ivaPeriods, per.months);
+      if (acc && per.id === acc.periodo) {
+        const netto = round2(liquidazione - accontoValue);
+        saldi[t.id] = netto;
+        if (netto < 0) crediti[t.id] = round2(-netto);
+        liquidazione = netto;
+      }
+      if (liquidazione > 0) propose(t, per, liquidazione * magg, labelFor(per, year));
+    }
+  }
 
   return {
     SCHEME_BASES, SCHEME_KINDS, SCHEME_SEZIONI, LEGACY_CODES,
