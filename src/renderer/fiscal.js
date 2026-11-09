@@ -80,8 +80,21 @@
 
     // Una scadenza è la coppia data+codice: due righe sullo stesso tributo
     // nello stesso giorno si sommerebbero due volte nella deduzione per cassa.
+    // Anno fiscale di competenza: dice di quale anno è un versamento fuori
+    // programma (un saldo pagato a giugno è dell'anno prima).
+    let anno;
+    if (e.anno != null && e.anno !== '') {
+      anno = Number(e.anno);
+      if (!/^\d{4}$/.test(String(e.anno)) || !Number.isInteger(anno)) throw new Error('f24: anno di competenza non valido');
+    }
+    const slot = e.slot ? String(e.slot) : null;
+
+    // Lo slot identifica la scadenza meglio della data, che si modifica: va
+    // cercato prima di data e codice.
     const byId = e.id ? list.findIndex(f => f.id === e.id) : -1;
-    const idx = byId >= 0 ? byId : list.findIndex(f => f.date === date && String(f.code) === code);
+    const bySlot = byId < 0 && slot ? list.findIndex(f => f.slot === slot) : -1;
+    const idx = byId >= 0 ? byId : bySlot >= 0 ? bySlot
+      : list.findIndex(f => f.date === date && String(f.code) === code);
     // Gli id calcolati cominciano con "_": una voce dell'utente che ne imitasse
     // uno verrebbe scambiata per una stima e riscritta al ricalcolo.
     const keep = idx >= 0 ? list[idx].id : null;
@@ -106,7 +119,11 @@
       status: F24_STATUSES.includes(e.status) ? e.status : 'scheduled',
     };
     if (e.paidDate) next.paidDate = String(e.paidDate);
-    delete next._generated;                   // una voce registrata è un fatto, non una stima
+    if (e.tributo !== undefined) next.tributo = e.tributo;
+    if (slot) next.slot = slot;
+    if (anno !== undefined) next.anno = anno;
+    delete next._generated;
+    delete next.kind;                   // una voce registrata è un fatto, non una stima
 
     const out = idx >= 0 ? list.map((f, i) => (i === idx ? next : f)) : [...list, next];
     return out.slice().sort((a, b) => String(a.date).localeCompare(String(b.date)));

@@ -101,3 +101,32 @@ test('spostare una voce di data non le fa condividere l\'id con una nuova', () =
   assert.notEqual(h[0].id, h[1].id);
   assert.equal(removeF24Entry(h, primo).length, 1, 'la cancellazione ne ha tolte due');
 });
+
+// ── Scadenzario: tributo, slot, anno di competenza ──────────────────────────
+// Lo slot collega la riga alla scadenza dello schema anche se la data cambia;
+// il tributo decide cosa la riga alimenta (la deduzione dei contributi); l'anno
+// dice di quale anno fiscale è un versamento fuori programma.
+test('tributo, slot e anno sopravvivono a inserimento e modifica', () => {
+  let h = upsertF24Entry([], entry({ tributo: 'contributi', slot: 'contributi/acc1/2026', anno: 2026 }));
+  assert.equal(h[0].tributo, 'contributi');
+  assert.equal(h[0].slot, 'contributi/acc1/2026');
+  assert.equal(h[0].anno, 2026);
+  h = upsertF24Entry(h, { ...h[0], amount: 6500 });
+  assert.equal(h.length, 1);
+  assert.equal(h[0].slot, 'contributi/acc1/2026');
+  assert.equal(h[0].amount, 6500);
+});
+
+test('un anno di competenza non valido viene rifiutato', () => {
+  assert.throws(() => upsertF24Entry([], entry({ anno: '26' })), /anno/);
+  assert.equal(upsertF24Entry([], entry({ anno: '2025' }))[0].anno, 2025);
+});
+
+test('due righe con lo stesso slot non coesistono', () => {
+  let h = upsertF24Entry([], entry({ slot: 'irpef/acc1/2026', tributo: 'irpef', date: '2026-06-30', code: '4033' }));
+  // Stesso slot, data diversa e senza id: è la stessa scadenza, non una nuova.
+  h = upsertF24Entry(h, entry({ slot: 'irpef/acc1/2026', tributo: 'irpef', date: '2026-07-15', code: '4033', amount: 900 }));
+  assert.equal(h.length, 1);
+  assert.equal(h[0].date, '2026-07-15');
+  assert.equal(h[0].amount, 900);
+});

@@ -1069,9 +1069,12 @@ const TaxF24 = ({ fiscal, tax, fiscalYear, onUpdateFiscal }) => {
     if (!existing) return;
     // Passa da upsertF24Entry come ogni altra scrittura: normalizza l'id (una
     // voce calcolata ne porta uno che comincia con "_") e toglie _generated.
+    // Lo slot e il tributo vengono con la proposta: sono loro, non la data, a
+    // collegare il versamento alla sua scadenza e a dire cosa deduce.
+    const anno = existing.slot ? Number(String(existing.slot).split("/")[2]) : undefined;
     onUpdateFiscal({
       ...fiscal,
-      f24History: window.upsertF24Entry(fiscal.f24History || [], { ...existing, status: "paid", paidDate: now }),
+      f24History: window.upsertF24Entry(fiscal.f24History || [], { ...existing, anno, status: "paid", paidDate: now }),
     });
   };
 
@@ -1080,15 +1083,39 @@ const TaxF24 = ({ fiscal, tax, fiscalYear, onUpdateFiscal }) => {
   // già presente, con l'importo che aveva: un versamento vero che il calcolo
   // non prevede — una rata INPS quando la base dell'anno prima è vuota — non
   // aveva modo di entrare, e restava fuori dalla deduzione per cassa.
-  const emptyDraft = { id: null, date: `${fiscalYear}-06-30`, code: "3801", desc: "", amount: "", status: "paid" };
+  const scheme = tax.scheme || { tributi: [] };
+  const defaultTributo = (scheme.tributi.find(t => t.kind === "contributo") || scheme.tributi[0] || {}).id || null;
+  const emptyDraft = {
+    id: null, date: `${fiscalYear}-06-30`, code: "", desc: "", amount: "", status: "paid",
+    tributo: defaultTributo, slot: "", anno: Number(fiscalYear),
+  };
   const [draft, setDraft] = useState(emptyDraft);
+  // Le scadenze del tributo scelto, di quest'anno e dell'anno prima: un saldo si
+  // versa l'anno dopo, e "Saldo IRPEF 2025" pagato a giugno è dell'anno prima.
+  const slotOptions = draft.tributo
+    ? [...window.schemeSlots(scheme, draft.tributo, Number(fiscalYear) - 1),
+       ...window.schemeSlots(scheme, draft.tributo, Number(fiscalYear))]
+    : [];
+  const pickSlot = (value) => {
+    const opt = slotOptions.find(o => o.slot === value);
+    if (!opt) { setDraft({ ...draft, slot: "", anno: Number(String(draft.date).slice(0, 4)) || Number(fiscalYear) }); return; }
+    const t = scheme.tributi.find(x => x.id === draft.tributo) || {};
+    const rid = opt.slot.split("/")[1];
+    const r = (t.righe || t.periodi || []).find(x => x.id === rid) || (rid === "acconto" ? t.acconto : null) || {};
+    setDraft({
+      ...draft, slot: opt.slot, anno: Number(opt.slot.split("/")[2]), date: opt.date,
+      code: draft.code || String(r.code || ""), desc: draft.desc || opt.label,
+    });
+  };
   const [draftError, setDraftError] = useState("");
   const isManual = f => !f._generated && (fiscal.f24History || []).some(h => h.id === f.id);
 
   const saveDraft = () => {
     if (!onUpdateFiscal) return;
     try {
-      const next = window.upsertF24Entry(fiscal.f24History || [], draft);
+      const next = window.upsertF24Entry(fiscal.f24History || [], {
+        ...draft, slot: draft.slot || null, tributo: draft.tributo || null,
+      });
       onUpdateFiscal({ ...fiscal, f24History: next });
       setDraft(emptyDraft);
       setDraftError("");
@@ -1099,7 +1126,11 @@ const TaxF24 = ({ fiscal, tax, fiscalYear, onUpdateFiscal }) => {
 
   const editEntry = (f) => {
     setDraftError("");
-    setDraft({ id: f.id, date: f.date, code: f.code, desc: f.desc || "", amount: f.amount, status: f.status });
+    setDraft({
+      id: f.id, date: f.date, code: f.code, desc: f.desc || "", amount: f.amount, status: f.status,
+      tributo: f.tributo || null, slot: f.slot || "",
+      anno: f.anno != null ? f.anno : Number(String(f.date).slice(0, 4)),
+    });
   };
 
   const deleteEntry = (id) => {
@@ -1159,26 +1190,69 @@ const TaxF24 = ({ fiscal, tax, fiscalYear, onUpdateFiscal }) => {
               {draft.id ? "Modifica la voce" : "Registra un versamento o una scadenza"}
             </div>
             <div className="hint" style={{ marginBottom: 10 }}>
-              Solo le voci marcate <strong>Versato</strong> con codice 3801 o 0601 si deducono dal
-              reddito, e nell'anno della data che indichi qui.
+              Solo le voci <strong>Versato</strong> di un tributo contributivo si deducono dal
+              reddito, nell'anno della data che indichi qui. La scadenza collega la voce allo
+              scadenzario: un acconto registrato sostituisce la stima e conta nel saldo.
             </div>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end" }}>
               <label style={{ display: "grid", gap: 4, fontSize: 12 }}>Data
                 <input className="input mono" type="date" style={{ width: 150 }}
                   value={draft.date} onChange={e => setDraft({ ...draft, date: e.target.value })} />
               </label>
-              <label style={{ display: "grid", gap: 4, fontSize: 12 }}>Codice tributo
-                <input className="input mono" list="f24-codici" style={{ width: 110 }} placeholder="3801"
-                  value={draft.code} onChange={e => setDraft({ ...draft, code: e.target.value })} />
+              <label style={{ display: "grid", gap: 4, fontSize: 12 }}>Tributo
+                <select className="select" style={{ width: 190 }}
+                  value={draft.tributo || ""}
+                  onChange={e => setDraft({ ...draft, tributo: e.target.value || null, slot: "" })}>
+                  {scheme.tributi.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
+                  <option value="">— da indicare —</option>
+                </select>
               </label>
+              <label style={{ display: "grid", gap: 4, fontSize: 12 }}>Scadenza
+                <select className="select" style={{ width: 240 }}
+                  value={draft.slot || ""} onChange={e => pickSlot(e.target.value)}>
+                  <option value="">Fuori programma</option>
+                  {slotOptions.map(o => (
+                    <option key={o.slot} value={o.slot}>{o.label} · {new Date(o.date).toLocaleDateString("it-IT")}</option>
+                  ))}
+                </select>
+              </label>
+              {!draft.slot && (
+                <label style={{ display: "grid", gap: 4, fontSize: 12 }}>Anno di competenza
+                  <input className="input mono" style={{ width: 90 }} inputMode="numeric"
+                    value={draft.anno == null ? "" : draft.anno}
+                    onChange={e => setDraft({ ...draft, anno: e.target.value })} />
+                </label>
+              )}
+              <label style={{ display: "grid", gap: 4, fontSize: 12 }}>Codice tributo
+                <input className="input mono" list="f24-codici" style={{ width: 110 }} placeholder="PXX"
+                  value={draft.code}
+                  onChange={e => {
+                    const code = e.target.value;
+                    setDraft({ ...draft, code, tributo: window.inferTributo(code, scheme) || draft.tributo });
+                  }} />
+              </label>
+              {/* Codici dell'Appendice A della spec dello scadenzario. */}
               <datalist id="f24-codici">
-                <option value="3801">Contributi cassa / Gestione Separata</option>
-                <option value="0601">Contributi INPS artigiani e commercianti</option>
                 <option value="4001">Saldo IRPEF</option>
                 <option value="4033">1° acconto IRPEF</option>
                 <option value="4034">2° acconto IRPEF</option>
-                <option value="6031">IVA trimestrale</option>
-                <option value="3800">IRAP</option>
+                <option value="3801">Saldo addizionale regionale</option>
+                <option value="3843">Acconto addizionale comunale</option>
+                <option value="3844">Saldo addizionale comunale</option>
+                <option value="PXX">Gestione Separata INPS (solo GS)</option>
+                <option value="P10">Gestione Separata INPS (con altra copertura)</option>
+                <option value="AF">INPS artigiani, minimale</option>
+                <option value="AP">INPS artigiani, eccedente</option>
+                <option value="CF">INPS commercianti, minimale</option>
+                <option value="CP">INPS commercianti, eccedente</option>
+                <option value="6031">IVA 1° trimestre</option>
+                <option value="6032">IVA 2° trimestre</option>
+                <option value="6033">IVA 3° trimestre</option>
+                <option value="6099">IVA saldo annuale</option>
+                <option value="6035">Acconto IVA (trimestrali)</option>
+                <option value="3812">1° acconto IRAP</option>
+                <option value="3813">2° acconto IRAP</option>
+                <option value="3800">Saldo IRAP</option>
               </datalist>
               <label style={{ display: "grid", gap: 4, fontSize: 12, flex: "1 1 220px" }}>Descrizione
                 <input className="input" placeholder="1° acconto contributi 2026"
@@ -1227,7 +1301,13 @@ const TaxF24 = ({ fiscal, tax, fiscalYear, onUpdateFiscal }) => {
               <tr key={f.id}>
                 <td className="mono">{new Date(f.date).toLocaleDateString("it-IT")}</td>
                 <td className="mono"><strong>{f.code}</strong></td>
-                <td>{f.desc}</td>
+                <td>
+                  {f.desc}
+                  {!f._generated && f.kind === null && (
+                    <span className="badge badge-warning" style={{ marginLeft: 6 }}
+                      title="Senza tributo la voce non entra nei calcoli: modificala e scegli il tributo">tributo da indicare</span>
+                  )}
+                </td>
                 <td className="num mono"><strong>{f.amount > 0 ? fmtEUR(f.amount) : <span style={{ color: "var(--text-muted)" }}>stimato</span>}</strong></td>
                 <td>
                   {f.status === "paid" && <span className="badge badge-success badge-dot">Versato</span>}
