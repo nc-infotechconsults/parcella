@@ -938,10 +938,16 @@ const TaxIRPEF = ({ tax, fiscal, fiscalYear, onMark, onUnmark }) => (
 
           <div style={{ padding: 14, border: "1px solid var(--border)", borderRadius: 4 }}>
             <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>
-              Acconti IRPEF — metodo storico su {tax.prevYr}
-              {tax.prevYear.derived
-                ? <span className="badge badge-success" style={{ marginLeft: 6 }}>da fatture {tax.prevYr}</span>
-                : <span className="badge" style={{ marginLeft: 6 }}>stima inserita a mano</span>}
+              {/* Il titolo segue lo schema: con "nessun acconto" non c'è un metodo
+                  storico né una base dell'anno prima da dichiarare. */}
+              {((tax.scheme && tax.scheme.tributi) || []).some(t => t.base === "irpef" && t.acconti && t.acconti.metodo === "storico")
+                ? <React.Fragment>
+                    Acconti IRPEF — metodo storico su {tax.prevYr}
+                    {tax.prevYear.derived
+                      ? <span className="badge badge-success" style={{ marginLeft: 6 }}>da fatture {tax.prevYr}</span>
+                      : <span className="badge" style={{ marginLeft: 6 }}>stima inserita a mano</span>}
+                  </React.Fragment>
+                : "IRPEF e addizionali — scadenze dallo scadenzario"}
             </div>
             <SchemeRows tax={tax} bases={["irpef", "addReg", "addCom"]} fiscalYear={fiscalYear} onMark={onMark} onUnmark={onUnmark} />
             {/* Il saldo IRPEF chiude la sola IRPEF: le addizionali hanno saldi e codici propri. */}
