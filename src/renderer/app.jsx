@@ -150,11 +150,9 @@ const App = () => {
       const loadedStudio = data.studio || window.APP_DATA.user;
       let migratedFiscal = loadedFiscal;
       try {
-        const res = window.migrateFiscal({
+        const res = window.migrateFiscalWithData({
           fiscal: loadedFiscal, studio: loadedStudio, now: new Date(),
-          proposalsFor: y => window.computeTaxes(data.activities || [], data.expenses || [],
-            { ...loadedFiscal, f24History: [] }, String(y), data.clients || [], loadedStudio, data.invoices || [])
-            .f24All.filter(f => f._generated),
+          activities: data.activities, expenses: data.expenses, clients: data.clients, invoices: data.invoices,
         });
         if (res.log.length) console.info('[migrazione F24]\n' + res.log.join('\n'));
         migratedFiscal = res.fiscal;

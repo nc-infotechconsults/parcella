@@ -74,12 +74,14 @@
     const date = String(e.date || '');
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error('f24: data non valida (attesa AAAA-MM-GG)');
     const code = String(e.code || '').trim();
-    if (!code) throw new Error('f24: codice tributo mancante');
+    // Una voce che dichiara il suo tributo può non avere codice: le casse
+    // private hanno codici propri o si pagano con pagoPA, e il preset lo lascia
+    // da indicare. Senza tributo, il codice è l'unica cosa che dice cos'è.
+    const tributo = e.tributo == null || e.tributo === '' ? null : String(e.tributo);
+    if (!code && !tributo) throw new Error('f24: codice tributo mancante');
     const amount = typeof e.amount === 'number' ? e.amount : Number(String(e.amount).replace(',', '.'));
     if (!isFinite(amount) || amount < 0) throw new Error('f24: importo non valido');
 
-    // Una scadenza è la coppia data+codice: due righe sullo stesso tributo
-    // nello stesso giorno si sommerebbero due volte nella deduzione per cassa.
     // Anno fiscale di competenza: dice di quale anno è un versamento fuori
     // programma (un saldo pagato a giugno è dell'anno prima).
     let anno;
@@ -89,16 +91,20 @@
     }
     const slot = e.slot ? String(e.slot) : null;
 
-    // Lo slot identifica la scadenza meglio della data, che si modifica: va
-    // cercato prima di data e codice.
+    // Lo slot è l'identità della scadenza. A giugno il saldo dell'anno prima e
+    // il 1° acconto si versano lo stesso giorno con lo stesso codice (PXX, AP):
+    // cercare per data e codice faceva sovrascrivere l'uno con l'altro. Data e
+    // codice identificano una voce solo fra le voci senza slot — lì due righe
+    // uguali si sommerebbero due volte nella deduzione per cassa.
     const byId = e.id ? list.findIndex(f => f.id === e.id) : -1;
-    const bySlot = byId < 0 && slot ? list.findIndex(f => f.slot === slot) : -1;
-    const idx = byId >= 0 ? byId : bySlot >= 0 ? bySlot
-      : list.findIndex(f => f.date === date && String(f.code) === code);
+    const idx = byId >= 0 ? byId
+      : slot ? list.findIndex(f => f.slot === slot)
+        : list.findIndex(f => !f.slot && f.date === date && String(f.code) === code);
+    const stem = code || tributo;
     // Gli id calcolati cominciano con "_": una voce dell'utente che ne imitasse
     // uno verrebbe scambiata per una stima e riscritta al ricalcolo.
     const keep = idx >= 0 ? list[idx].id : null;
-    let id = (keep && !String(keep).startsWith('_')) ? keep : `f24_${date}_${code}`;
+    let id = (keep && !String(keep).startsWith('_')) ? keep : `f24_${date}_${stem}`;
     // L'id si conia da data e codice, ma la data si modifica: una voce spostata
     // si porta dietro l'id vecchio, e una voce nuova su quella data ne conierebbe
     // uno identico. Due righe con lo stesso id si cancellano insieme e si
@@ -106,7 +112,7 @@
     if (idx < 0) {
       const taken = new Set(list.map(f => f.id));
       let n = 2;
-      while (taken.has(id)) id = `f24_${date}_${code}_${n++}`;
+      while (taken.has(id)) id = `f24_${date}_${stem}_${n++}`;
     }
 
     const next = {
@@ -119,7 +125,7 @@
       status: F24_STATUSES.includes(e.status) ? e.status : 'scheduled',
     };
     if (e.paidDate) next.paidDate = String(e.paidDate);
-    if (e.tributo !== undefined) next.tributo = e.tributo;
+    if (e.tributo !== undefined) next.tributo = tributo;
     if (slot) next.slot = slot;
     if (anno !== undefined) next.anno = anno;
     delete next._generated;

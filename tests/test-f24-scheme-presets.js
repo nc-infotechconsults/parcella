@@ -180,3 +180,14 @@ test('la ditta commerciante versa con CF e CP', () => {
   const artigiano = s.activeScheme({}, { tipoSoggetto: 'ditta_individuale' }).scheme;
   assert.ok(trib(artigiano, 'inpsFisso').righe.every(r => r.code === 'AF'));
 });
+
+// I4: uno schema salvato non valido va segnalato come tale, perché l'editor
+// possa mostrarlo e permettere di correggerlo o ripristinare il preset.
+test('activeScheme segnala lo schema salvato non valido', () => {
+  const bad = s.presetScheme('professionista-gs', {});
+  bad.tributi[0].base = 'irpefNetta';
+  const r = s.activeScheme({ scadenzario: bad }, GS);
+  assert.equal(r.invalid, true);
+  assert.equal(s.activeScheme({}, GS).invalid, false);
+  assert.equal(s.activeScheme({ scadenzario: s.presetScheme('professionista-gs', {}) }, GS).invalid, false);
+});

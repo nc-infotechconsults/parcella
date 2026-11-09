@@ -130,3 +130,33 @@ test('due righe con lo stesso slot non coesistono', () => {
   assert.equal(h[0].date, '2026-07-15');
   assert.equal(h[0].amount, 900);
 });
+
+// ── Revisione finale ──────────────────────────────────────────────────────
+// C1: a giugno il saldo dell'anno prima e il 1° acconto si versano lo stesso
+// giorno con lo stesso codice (PXX per la GS, AP/CP per la ditta). Lo slot è
+// l'identità della scadenza: data e codice non bastano a dire che due righe
+// sono la stessa.
+test('saldo dell\'anno prima e 1° acconto, stesso giorno e stesso codice, coesistono', () => {
+  for (const code of ['PXX', 'AP']) {
+    let h = upsertF24Entry([], entry({ code, slot: 'contributi/saldo/2025', tributo: 'contributi', amount: 15642 }));
+    h = upsertF24Entry(h, entry({ code, slot: 'contributi/acc1/2026', tributo: 'contributi', amount: 6256.8 }));
+    assert.equal(h.length, 2, code);
+    assert.notEqual(h[0].id, h[1].id);
+    assert.deepEqual(h.map(x => x.amount).sort((a, b) => a - b), [6256.8, 15642]);
+  }
+});
+
+test('una voce fuori programma non sovrascrive una scadenza registrata nello stesso giorno', () => {
+  let h = upsertF24Entry([], entry({ code: 'PXX', slot: 'contributi/acc1/2026', tributo: 'contributi', amount: 6800 }));
+  h = upsertF24Entry(h, entry({ code: 'PXX', tributo: 'contributi', amount: 100 }));
+  assert.equal(h.length, 2);
+});
+
+// I1: le casse private hanno codici propri (o pagoPA): il preset lascia il
+// codice vuoto, e la rata deve potersi segnare versata lo stesso.
+test('una voce con tributo può non avere codice; senza tributo no', () => {
+  const h = upsertF24Entry([], entry({ code: '', tributo: 'contributi', slot: 'contributi/acc1/2026' }));
+  assert.equal(h.length, 1);
+  assert.equal(h[0].code, '');
+  assert.throws(() => upsertF24Entry([], entry({ code: '' })), /codice/);
+});

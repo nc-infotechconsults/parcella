@@ -90,3 +90,17 @@ test('quote degli acconti che non sommano a 100: avviso, non errore', () => {
   assert.equal(res.ok, true);
   assert.equal(res.warnings[0].path, 'tributi[0].acconti');
 });
+
+// I5: un elemento nullo in uno schema salvato deve dare un errore, non
+// un'eccezione che fa cadere tutta la pagina Tasse.
+test('elementi nulli: errori, non eccezioni', () => {
+  for (const mutate of [
+    s => { s.tributi[0].righe.push(null); },
+    s => { s.tributi[1].periodi.push(null); },
+    s => { s.tributi[1].acconto = null; s.tributi[1].periodi.push(null); },
+  ]) {
+    let res;
+    assert.doesNotThrow(() => { res = broken(mutate); });
+    assert.equal(res.ok, false);
+  }
+});

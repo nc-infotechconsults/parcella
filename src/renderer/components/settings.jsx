@@ -603,12 +603,26 @@ const SEZIONE_LABELS = { erario: "Erario", inps: "INPS", regioni: "Regioni", loc
 const ScadenzarioCard = ({ fisc, studio, onSaveScheme }) => {
   const active = window.activeScheme(fisc, studio);
   const clone = x => JSON.parse(JSON.stringify(x));
-  const [draft, setDraft] = useState(() => clone(active.scheme));
+  // Uno schema salvato non valido si mostra com'è, perché lo si possa
+  // correggere (i calcoli intanto usano il preset). Gli elementi che non sono
+  // oggetti non si possono mostrare né correggere: si tolgono.
+  const repaired = sc => {
+    const obj = x => x && typeof x === "object";
+    const c = clone(sc);
+    c.tributi = (Array.isArray(c.tributi) ? c.tributi : []).filter(obj).map(t => ({
+      ...t,
+      ...(Array.isArray(t.righe) ? { righe: t.righe.filter(obj) } : {}),
+      ...(Array.isArray(t.periodi) ? { periodi: t.periodi.filter(obj) } : {}),
+    }));
+    return c;
+  };
+  const baseline = active.invalid ? repaired(fisc.scadenzario) : active.scheme;
+  const [draft, setDraft] = useState(() => clone(baseline));
   const [open, setOpen] = useState({});
   const res = window.validateScheme(draft);
   const errorAt = path => (res.errors.find(e => e.path === path) || {}).message;
   const linked = id => (fisc.f24History || []).some(f => f.tributo === id);
-  const dirty = JSON.stringify(draft) !== JSON.stringify(active.scheme);
+  const dirty = active.invalid || JSON.stringify(draft) !== JSON.stringify(active.scheme);
 
   const setT = (ti, patch) => setDraft(d => ({ ...d, tributi: d.tributi.map((t, i) => (i === ti ? { ...t, ...patch } : t)) }));
   const setSub = (ti, key, patch) => setDraft(d => ({
@@ -669,14 +683,14 @@ const ScadenzarioCard = ({ fisc, studio, onSaveScheme }) => {
         <div>
           <h3>Scadenzario F24</h3>
           <div className="subtitle">
-            {active.source === "saved" ? "Schema salvato" : "Preset dello studio"} · le scadenze di ogni tributo, i codici e come si calcolano
+            {active.invalid ? "Schema salvato, da correggere" : active.source === "saved" ? "Schema salvato" : "Preset dello studio"} · le scadenze di ogni tributo, i codici e come si calcolano
           </div>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <select className="select" value={draft.preset || ""} onChange={e => pickPreset(e.target.value)}>
             {Object.entries(PRESET_LABELS).map(([id, label]) => <option key={id} value={id}>{label}</option>)}
           </select>
-          {active.source === "saved" && <button className="btn btn-sm" onClick={restore}>Ripristina</button>}
+          {fisc.scadenzario && <button className="btn btn-sm" onClick={restore}>Ripristina</button>}
           <button className="btn btn-primary btn-sm" disabled={!res.ok || !dirty}
             title={res.ok ? "" : "Correggi gli errori indicati prima di salvare"}
             onClick={() => onSaveScheme(clone(draft))}>Salva scadenzario</button>

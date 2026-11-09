@@ -273,7 +273,8 @@ function computeTaxes(activities, expenses, fiscal, year, clients, studio, invoi
     const match = firstPass.proposals.find(p => !claimed.has(p.slot) && sameDeadline(f, p));
     if (!match) return f;
     claimed.add(match.slot);
-    return { ...f, slot: match.slot, tributo: f.tributo || match.tributo };
+    // Lo slot decide il tributo, come nella migrazione.
+    return { ...f, slot: match.slot, tributo: match.tributo };
   });
   const sched = schedule(slotted);
 
@@ -354,6 +355,21 @@ function computeTaxes(activities, expenses, fiscal, year, clients, studio, invoi
 }
 window.computeTaxes = computeTaxes;
 
+// La migrazione dello scadenzario con i dati dell'app: le proposte a storico
+// vuoto riconoscono le righe vecchie, quelle con lo storico vero danno gli
+// importi delle spunte — cioè le rate che l'app mostrava. Chiamata da app.jsx
+// al caricamento; qui perché ha bisogno di computeTaxes.
+function migrateFiscalWithData({ fiscal, studio, activities, expenses, clients, invoices, now }) {
+  const at = (f, y) => computeTaxes(activities || [], expenses || [], f, String(y), clients || [], studio, invoices || [])
+    .f24All.filter(x => x._generated);
+  return window.migrateFiscal({
+    fiscal, studio, now,
+    proposalsFor: y => at({ ...fiscal, f24History: [] }, y),
+    amountsFor: y => at(fiscal, y),
+  });
+}
+window.migrateFiscalWithData = migrateFiscalWithData;
+
 const Taxes = ({ activities, expenses, fiscal, clients, studio, invoices, year: taxYear, onUpdateFiscal }) => {
   const [tab, setTab] = useState("overview");
   const fiscalYear = String(taxYear || new Date().getFullYear());
@@ -364,8 +380,8 @@ const Taxes = ({ activities, expenses, fiscal, clients, studio, invoices, year: 
   const f24All = tax.f24All || [];
   const f24Paid = f24All.filter(f => f.status === "paid");
   const f24Upcoming = f24All.filter(f => f.status !== "paid").sort((a, b) => a.date.localeCompare(b.date));
-  const totalPaid = f24Paid.reduce((s, f) => s + f.amount, 0);
-  const totalUpcoming = f24Upcoming.reduce((s, f) => s + f.amount, 0);
+  const totalPaid = f24Paid.reduce((s, f) => s + window.amountOf(f.amount), 0);
+  const totalUpcoming = f24Upcoming.reduce((s, f) => s + window.amountOf(f.amount), 0);
   const nextDeadline = f24Upcoming[0];
   const daysToNext = nextDeadline ? Math.ceil((new Date(nextDeadline.date) - today) / 86400000) : null;
 
@@ -375,12 +391,19 @@ const Taxes = ({ activities, expenses, fiscal, clients, studio, invoices, year: 
   const markPaid = onUpdateFiscal ? (row) => {
     if (!row) return;
     const anno = row.slot ? Number(String(row.slot).split("/")[2]) : row.anno;
-    onUpdateFiscal({
-      ...fiscal,
-      f24History: window.upsertF24Entry(fiscal.f24History || [], {
-        ...row, anno, status: "paid", paidDate: new Date().toISOString().slice(0, 10),
-      }),
-    });
+    // Un errore qui non deve restare nella console: il pulsante sembrerebbe
+    // semplicemente non fare niente.
+    try {
+      onUpdateFiscal({
+        ...fiscal,
+        f24History: window.upsertF24Entry(fiscal.f24History || [], {
+          ...row, anno, status: "paid", paidDate: new Date().toISOString().slice(0, 10),
+        }),
+      });
+    } catch (e) {
+      const msg = "Versamento non registrato: " + String(e.message || e).replace(/^f24: /, "");
+      if (window.showToast) window.showToast(msg, "error"); else window.alert(msg);
+    }
   } : null;
   const unmarkPaid = onUpdateFiscal ? (row) => {
     if (!row || row._generated) return;
@@ -646,6 +669,14 @@ const TaxWaterfall = ({ tax, studio }) => {
 };
 
 // ===== IVA =====
+// L'acconto di dicembre che grava su un periodo IVA (0 se nessuno): quel
+// periodo si versa al netto, come nel calendario.
+const accontoIvaSu = (tax, q) => {
+  const iva = ((tax.scheme && tax.scheme.tributi) || []).find(t => t.kind === "iva");
+  return iva && iva.acconto && iva.acconto.periodo === q.id.toLowerCase()
+    ? window.amountOf(tax.acconti && tax.acconti[iva.id]) : 0;
+};
+
 const TaxIVA = ({ tax, fiscal, fiscalYear, onMark, onUnmark }) => (
   <div className="card">
     <div className="card-header">
@@ -676,14 +707,24 @@ const TaxIVA = ({ tax, fiscal, fiscalYear, onMark, onUnmark }) => (
             <td className="num mono" style={{ color: "var(--text-muted)" }} title={t('tax.reverseNeutral')}>
               {fmtEUR(q.reverse)}
             </td>
-            <td className="num mono"><strong>{fmtEUR(Math.max(0, q.balance))}</strong></td>
+            {/* Il periodo su cui grava l'acconto di dicembre si versa al netto: lo
+                stesso importo del calendario, non la liquidazione lorda. */}
+            {(() => {
+              const acc = accontoIvaSu(tax, q);
+              return (
+                <td className="num mono">
+                  <strong>{fmtEUR(Math.max(0, q.balance - acc))}</strong>
+                  {acc > 0 && <div style={{ fontSize: 10.5, color: "var(--text-muted)" }}>al netto dell'acconto di {fmtEUR(acc)}</div>}
+                </td>
+              );
+            })()}
             <td>
               {(() => {
                 const r = (tax.f24All || []).find(f => f.slot === `iva/${q.id.toLowerCase()}/${fiscalYear}`);
                 return r && r.status === "paid";
               })()
                 ? <span className="badge badge-success badge-dot">Versato {fmtEUR((tax.f24All || []).find(f => f.slot === `iva/${q.id.toLowerCase()}/${fiscalYear}`).amount)}</span>
-                : q.balance > 0
+                : q.balance - accontoIvaSu(tax, q) > 0
                   ? <span className="badge badge-warning badge-dot">Da liquidare</span>
                   : <span className="badge">A credito (compensa)</span>}
             </td>

@@ -142,3 +142,46 @@ test('la migrazione non salva nessuno schema', () => {
   const { fiscal } = migrate({ year: 2026, cassaAcconto1Paid: true, f24History: [row()] });
   assert.equal(fiscal.scadenzario, undefined);
 });
+
+// ── Revisione finale ──────────────────────────────────────────────────────
+// I2: due righe vecchie nella stessa data non possono prendere lo stesso slot,
+// e una sola candidata va comunque confrontata con la descrizione.
+test('due righe vecchie nello stesso giorno non prendono lo stesso slot', () => {
+  const proposte = { 2026: [{ slot: 'contributi/acc1/2026', tributo: 'contributi', date: '2026-06-30', code: 'PXX', amount: 2720, desc: '1° acconto INPS 2026' }] };
+  const { fiscal } = migrate({ f24History: [
+    row({ id: 'a', date: '2026-06-30', code: '3801', desc: 'Saldo INPS 2025', amount: 500 }),
+    row({ id: 'b', date: '2026-06-30', code: '3801', desc: '1° acconto INPS 2026', amount: 2720 }),
+  ] }, { proposalsFor: y => proposte[y] || [] });
+  const slots = fiscal.f24History.map(h => h.slot).filter(Boolean);
+  assert.equal(new Set(slots).size, slots.length, 'slot duplicati: ' + slots.join(', '));
+  assert.equal(fiscal.f24History.find(h => h.id === 'a').slot, undefined, 'un saldo non diventa un acconto');
+  assert.equal(fiscal.f24History.find(h => h.id === 'b').slot, 'contributi/acc1/2026');
+});
+
+// I3: lo slot assegnato decide il tributo.
+test('lo slot assegnato porta il suo tributo', () => {
+  const ditta = { tipoSoggetto: 'ditta_individuale' };
+  const proposte = { 2026: [{ slot: 'inpsEccedente/acc1/2026', tributo: 'inpsEccedente', date: '2026-06-30', code: 'AP', amount: 900, desc: '1° acconto INPS eccedente 2026' }] };
+  const { fiscal } = s.migrateFiscal({
+    fiscal: { f24History: [row({ date: '2026-06-30', code: '0601', desc: '1° acconto INPS' })] },
+    studio: ditta, proposalsFor: y => proposte[y] || [], now: NOW,
+  });
+  assert.equal(fiscal.f24History[0].slot, 'inpsEccedente/acc1/2026');
+  assert.equal(fiscal.f24History[0].tributo, 'inpsEccedente');
+});
+
+// C2: l'importo di una spunta è quello che l'app mostrava, cioè calcolato con
+// lo storico vero (i contributi versati l'anno prima riducono l'IRPEF di
+// quell'anno e quindi gli acconti). Le proposte a storico vuoto servono solo a
+// riconoscere le righe vecchie.
+test('gli importi delle spunte vengono da amountsFor quando c\'è', () => {
+  const { fiscal } = migrate({ year: 2026, irpefAcconto1Paid: true, f24History: [] },
+    { amountsFor: y => proposalsFor(y).map(p => (p.slot === 'irpef/acc1/2026' ? { ...p, amount: 6000 } : p)) });
+  assert.equal(fiscal.f24History.find(f => f.slot === 'irpef/acc1/2026').amount, 6000);
+});
+
+// M1: gli importi diventano numeri, così i totali sommano invece di concatenare.
+test('la migrazione normalizza gli importi testuali', () => {
+  const { fiscal } = migrate({ f24History: [row({ amount: '6800,5' }), row({ id: 'h2', date: '2026-12-30', code: '9999', amount: '100' })] });
+  assert.deepEqual(fiscal.f24History.map(h => h.amount), [6800.5, 100]);
+});

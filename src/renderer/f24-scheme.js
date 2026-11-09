@@ -75,6 +75,9 @@
         const months = new Set();
         periodi.forEach((per, pi) => {
           const q = `${p}.periodi[${pi}]`;
+          // Un elemento nullo in uno schema salvato è un errore, non
+          // un'eccezione che fa cadere la pagina Tasse.
+          if (!per || typeof per !== 'object') { err(q, 'periodo non valido'); return; }
           if (!per.id) err(`${q}.id`, 'id mancante');
           else if (ids.has(per.id)) err(`${q}.id`, `id "${per.id}" già usato`);
           ids.add(per.id);
@@ -85,7 +88,8 @@
           checkDated(q, per);
         });
         if (!isNonNeg(t.maggiorazionePct)) err(`${p}.maggiorazionePct`, 'maggiorazione non valida');
-        if (t.acconto) {
+        if (t.acconto != null && typeof t.acconto !== 'object') err(`${p}.acconto`, 'acconto non valido');
+        else if (t.acconto) {
           const q = `${p}.acconto`;
           if (!METODI.includes(t.acconto.metodo)) err(`${q}.metodo`, `metodo "${t.acconto.metodo}" sconosciuto`);
           if (!isPct(t.acconto.pct)) err(`${q}.pct`, 'percentuale fra 0 e 100');
@@ -97,7 +101,7 @@
         return;
       }
 
-      const acc = t.acconti || { metodo: 'nessuno' };
+      const acc = (t.acconti && typeof t.acconti === 'object') ? t.acconti : { metodo: 'nessuno' };
       if (!METODI.includes(acc.metodo)) err(`${p}.acconti.metodo`, `metodo "${acc.metodo}" sconosciuto`);
       if (acc.pct != null && !isPct(acc.pct)) err(`${p}.acconti.pct`, 'percentuale fra 0 e 100');
       if (!isNonNeg(acc.soglia)) err(`${p}.acconti.soglia`, 'la soglia non può essere negativa');
@@ -109,6 +113,7 @@
       let shareAcconti = 0, nAcconti = 0;
       righe.forEach((r, ri) => {
         const q = `${p}.righe[${ri}]`;
+        if (!r || typeof r !== 'object') { err(q, 'riga non valida'); return; }
         if (!r.id) err(`${q}.id`, 'id mancante');
         else if (ids.has(r.id)) err(`${q}.id`, `id "${r.id}" già usato`);
         ids.add(r.id);
@@ -240,12 +245,14 @@
   function activeScheme(fiscal, studio) {
     const f = fiscal || {};
     const preset = () => presetScheme(presetIdFor(studio), f, studio);
-    if (!f.scadenzario) return { scheme: preset(), source: 'preset', warning: null };
+    if (!f.scadenzario) return { scheme: preset(), source: 'preset', warning: null, invalid: false };
     const res = validateScheme(f.scadenzario);
-    if (res.ok) return { scheme: f.scadenzario, source: 'saved', warning: null };
+    if (res.ok) return { scheme: f.scadenzario, source: 'saved', warning: null, invalid: false };
     const first = res.errors[0];
+    // invalid: l'editor deve poter mostrare lo schema rotto per correggerlo, o
+    // ripristinare il preset; i calcoli intanto usano il preset.
     return {
-      scheme: preset(), source: 'preset',
+      scheme: preset(), source: 'preset', invalid: true,
       warning: `Scadenzario salvato non valido (${first.path}: ${first.message}): si usa il preset finché non lo correggi in Impostazioni.`,
     };
   }
@@ -462,43 +469,65 @@
   };
   const FLAG_KEYS = [...Object.keys(FLAG_SLOTS), 'ivaQ1Amount'];
 
-  function migrateFiscal({ fiscal, studio, proposalsFor, now }) {
+  // amountsFor(anno), se c'è, dà le proposte calcolate con lo storico vero: è
+  // da lì che vengono gli importi delle spunte, perché sono quelli che l'app
+  // mostrava (i contributi versati l'anno prima riducono l'IRPEF di
+  // quell'anno, e quindi gli acconti). proposalsFor, a storico vuoto, serve a
+  // riconoscere le righe vecchie: con lo storico vero le loro scadenze
+  // risulterebbero già coperte e non si troverebbero.
+  function migrateFiscal({ fiscal, studio, proposalsFor, amountsFor, now }) {
     const before = JSON.stringify(fiscal || {});
     const f = JSON.parse(before);
     const log = [];
     const scheme = activeScheme(f, studio).scheme;
-    const cache = {};
+    const cache = {}, amountCache = {};
     const proposals = y => (cache[y] = cache[y] || (proposalsFor ? proposalsFor(y) || [] : []));
+    const amounts = y => (amountsFor
+      ? (amountCache[y] = amountCache[y] || amountsFor(y) || [])
+      : proposals(y));
     let history = Array.isArray(f.f24History) ? f.f24History : [];
     const taken = () => new Set(history.filter(h => h.slot).map(h => h.slot));
 
-    // 1. Tributo dal codice, letto come lo usava l'app di prima.
-    history = history.map(h => (h.tributo !== undefined ? h
-      : { ...h, tributo: inferTributo(h.code, scheme, { legacy: true }) }));
+    // 1. Tributo dal codice, letto come lo usava l'app di prima; importi come
+    //    numeri, così i totali sommano invece di concatenare stringhe.
+    history = history.map(h => {
+      const out = h.tributo !== undefined ? h : { ...h, tributo: inferTributo(h.code, scheme, { legacy: true }) };
+      return typeof out.amount === 'number' ? out : { ...out, amount: round2(amountOf(out.amount)) };
+    });
 
     // 2. Slot alle righe che cadono nella data di una scadenza.
     const legacyOf = p => {
       const sp = slotParts(p.slot);
       return sp ? LEGACY_CODES[`${sp.tributo}/${sp.riga}`] : undefined;
     };
+    // Gli slot assegnati in questo passaggio vanno contati subito: due righe
+    // vecchie nello stesso giorno non devono prendere la stessa scadenza.
+    const claimed = taken();
     history = history.map(h => {
       if (h.slot) return h;
       const y = Number(String(h.date || '').slice(0, 4));
       if (!y) return h;
-      const used = taken();
-      let cands = [...proposals(y - 1), ...proposals(y)].filter(p => !used.has(p.slot) && p.date === h.date
+      let cands = [...proposals(y - 1), ...proposals(y)].filter(p => !claimed.has(p.slot) && p.date === h.date
         && (String(h.code) === String(p.code) || String(h.code) === legacyOf(p)));
       // Il tributo, se già noto, decide prima del codice: nel preset nuovo il
       // 3801 è l'addizionale regionale, ma una riga "Saldo INPS" scritta con il
       // 3801 di prima è un saldo contributi.
       if (h.tributo && cands.some(p => p.tributo === h.tributo)) cands = cands.filter(p => p.tributo === h.tributo);
-      let pick = cands.length === 1 ? cands[0] : null;
-      if (cands.length > 1) {
-        const isSaldo = /saldo/i.test(String(h.desc || ''));
-        pick = cands.find(p => {
-          const sp = slotParts(p.slot);
-          return isSaldo ? (sp.riga === 'saldo' && sp.anno === y - 1) : (sp.riga !== 'saldo' && sp.anno === y);
-        }) || null;
+      // La descrizione conta anche con una sola candidata: un "Saldo INPS
+      // 2025" non diventa il 1° acconto 2026 perché il saldo 2025, essendo un
+      // credito, non è stato proposto.
+      const desc = String(h.desc || '');
+      const saysSaldo = /saldo/i.test(desc), saysAcconto = /acconto/i.test(desc);
+      const fits = p => {
+        const sp = slotParts(p.slot);
+        if (saysSaldo) return sp.riga === 'saldo' && sp.anno === y - 1;
+        if (saysAcconto) return sp.riga !== 'saldo';
+        return true;
+      };
+      let pick = null;
+      if (cands.length === 1) pick = fits(cands[0]) ? cands[0] : null;
+      else if (cands.length > 1) {
+        pick = cands.find(p => fits(p) && (saysSaldo || slotParts(p.slot).anno === y)) || null;
         if (pick) log.push(`"${h.desc}" del ${h.date}: scadenza ${pick.slot} scelta dalla descrizione`);
       }
       // Senza scadenza la migrazione non inventa l'anno di competenza: con
@@ -506,7 +535,10 @@
       // un acconto di quest'anno e ne riduceva il saldo. Prima dello
       // scadenzario una riga così non toccava i saldi, e così resta.
       if (!pick) return h;
-      return { ...h, slot: pick.slot, tributo: h.tributo || pick.tributo, anno: slotParts(pick.slot).anno };
+      claimed.add(pick.slot);
+      // Lo slot decide il tributo: uno "0601" letto come INPS minimale che cade
+      // sull'acconto dell'eccedente è un acconto dell'eccedente.
+      return { ...h, slot: pick.slot, tributo: pick.tributo, anno: slotParts(pick.slot).anno };
     });
 
     // 3. Spunte "Versato" → righe registrate con l'importo di oggi.
@@ -519,7 +551,9 @@
       const inScheme = schemeSlots(scheme, tid, flagYear).some(x => x.slot === slot);
       if (!inScheme) { log.push(`${flag}: lo schema non ha la scadenza ${slot}, spunta scartata`); continue; }
       if (taken().has(slot)) { log.push(`${flag}: ${slot} è già registrata, spunta assorbita`); continue; }
-      const p = proposals(flagYear).find(x => x.slot === slot);
+      // Con lo storico vero, una scadenza già coperta da una riga registrata non
+      // ha proposta: la spunta non aggiunge niente, ed è giusto così.
+      const p = amounts(flagYear).find(x => x.slot === slot);
       const amount = flag === 'ivaQ1Paid' && f.ivaQ1Amount ? amountOf(f.ivaQ1Amount) : (p ? amountOf(p.amount) : 0);
       if (!p || !(amount > 0)) { log.push(`${flag}: nessun importo per ${slot}, spunta scartata`); continue; }
       let id = `f24_${p.date}_${p.code}`;
