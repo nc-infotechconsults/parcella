@@ -221,10 +221,10 @@ function computeTaxes(activities, expenses, fiscal, year, clients, studio, invoi
   // ── IVA trimestrale ───────────────────────────────────────────────────────
   // Scadenze: professionista trimestrale con +1%; ditta può essere mensile
   const ivaDeadlines = [
-    { id: "Q1", label: "1° trim (gen-mar)", deadline: "16 maggio (+1%)", months: ["01","02","03"], paid: fiscal.ivaQ1Paid, paidAmount: fiscal.ivaQ1Amount },
-    { id: "Q2", label: "2° trim (apr-giu)", deadline: "20 agosto (+1%)", months: ["04","05","06"], paid: fiscal.ivaQ2Paid },
-    { id: "Q3", label: "3° trim (lug-set)", deadline: "16 novembre (+1%)", months: ["07","08","09"], paid: fiscal.ivaQ3Paid },
-    { id: "Q4", label: "4° trim (ott-dic)", deadline: "16 marzo anno succ.", months: ["10","11","12"], paid: fiscal.ivaQ4Paid },
+    { id: "Q1", label: "1° trim (gen-mar)", deadline: "16 maggio (+1%)", months: ["01","02","03"] },
+    { id: "Q2", label: "2° trim (apr-giu)", deadline: "20 agosto (+1%)", months: ["04","05","06"] },
+    { id: "Q3", label: "3° trim (lug-set)", deadline: "16 novembre (+1%)", months: ["07","08","09"] },
+    { id: "Q4", label: "4° trim (ott-dic)", deadline: "16 marzo anno succ.", months: ["10","11","12"] },
   ];
   const trimestri = ivaDeadlines.map(qt => {
     // computeFiscalYear returns four quarters under quarterly liquidation and
@@ -369,6 +369,25 @@ const Taxes = ({ activities, expenses, fiscal, clients, studio, invoices, year: 
   const nextDeadline = f24Upcoming[0];
   const daysToNext = nextDeadline ? Math.ceil((new Date(nextDeadline.date) - today) / 86400000) : null;
 
+  // Segnare versata una scadenza è registrare la riga, con il suo slot: la riga
+  // è l'unica fonte dei versamenti. Toglierla è cancellare quella riga, come la
+  // ✕ del calendario. Una sola funzione per tutti i pannelli.
+  const markPaid = onUpdateFiscal ? (row) => {
+    if (!row) return;
+    const anno = row.slot ? Number(String(row.slot).split("/")[2]) : row.anno;
+    onUpdateFiscal({
+      ...fiscal,
+      f24History: window.upsertF24Entry(fiscal.f24History || [], {
+        ...row, anno, status: "paid", paidDate: new Date().toISOString().slice(0, 10),
+      }),
+    });
+  } : null;
+  const unmarkPaid = onUpdateFiscal ? (row) => {
+    if (!row || row._generated) return;
+    if (!window.confirm("Togliere il versamento registrato per questa scadenza?")) return;
+    onUpdateFiscal({ ...fiscal, f24History: window.removeF24Entry(fiscal.f24History || [], row.id) });
+  } : null;
+
   return (
     <div className="content">
       {/* Hero KPIs */}
@@ -430,19 +449,19 @@ const Taxes = ({ activities, expenses, fiscal, clients, studio, invoices, year: 
         <TaxOverview tax={tax} fiscal={fiscal} f24Upcoming={f24Upcoming} fiscalYear={fiscalYear} studio={studio} />
       )}
       {tab === "iva" && (
-        <TaxIVA tax={tax} fiscal={fiscal} fiscalYear={fiscalYear} />
+        <TaxIVA tax={tax} fiscal={fiscal} fiscalYear={fiscalYear} onMark={markPaid} onUnmark={unmarkPaid} />
       )}
       {tab === "irpef" && (
-        <TaxIRPEF tax={tax} fiscal={fiscal} />
+        <TaxIRPEF tax={tax} fiscal={fiscal} fiscalYear={fiscalYear} onMark={markPaid} onUnmark={unmarkPaid} />
       )}
       {tab === "cassa" && (
-        <TaxCassa tax={tax} fiscal={fiscal} studio={studio} onUpdateFiscal={onUpdateFiscal} />
+        <TaxCassa tax={tax} fiscal={fiscal} studio={studio} fiscalYear={fiscalYear} onMark={markPaid} onUnmark={unmarkPaid} />
       )}
       {tab === "irap" && tax.tipo === "ditta_individuale" && (
-        <TaxIRAP tax={tax} fiscal={fiscal} fiscalYear={fiscalYear} onUpdateFiscal={onUpdateFiscal} />
+        <TaxIRAP tax={tax} fiscal={fiscal} fiscalYear={fiscalYear} onMark={markPaid} onUnmark={unmarkPaid} />
       )}
       {tab === "f24" && (
-        <TaxF24 fiscal={fiscal} tax={tax} fiscalYear={fiscalYear} onUpdateFiscal={onUpdateFiscal} />
+        <TaxF24 fiscal={fiscal} tax={tax} fiscalYear={fiscalYear} onUpdateFiscal={onUpdateFiscal} onMark={markPaid} onUnmark={unmarkPaid} />
       )}
       {tab === "assets" && (
         <div className="card">
@@ -620,7 +639,7 @@ const TaxWaterfall = ({ tax, studio }) => {
 };
 
 // ===== IVA =====
-const TaxIVA = ({ tax, fiscal, fiscalYear }) => (
+const TaxIVA = ({ tax, fiscal, fiscalYear, onMark, onUnmark }) => (
   <div className="card">
     <div className="card-header">
       <div>
@@ -652,8 +671,11 @@ const TaxIVA = ({ tax, fiscal, fiscalYear }) => (
             </td>
             <td className="num mono"><strong>{fmtEUR(Math.max(0, q.balance))}</strong></td>
             <td>
-              {q.paid
-                ? <span className="badge badge-success badge-dot">Versato {q.paidAmount ? fmtEUR(q.paidAmount) : ""}</span>
+              {(() => {
+                const r = (tax.f24All || []).find(f => f.slot === `iva/${q.id.toLowerCase()}/${fiscalYear}`);
+                return r && r.status === "paid";
+              })()
+                ? <span className="badge badge-success badge-dot">Versato {fmtEUR((tax.f24All || []).find(f => f.slot === `iva/${q.id.toLowerCase()}/${fiscalYear}`).amount)}</span>
                 : q.balance > 0
                   ? <span className="badge badge-warning badge-dot">Da liquidare</span>
                   : <span className="badge">A credito (compensa)</span>}
@@ -674,8 +696,13 @@ const TaxIVA = ({ tax, fiscal, fiscalYear }) => (
     </table>
     <div className="card-body" style={{ borderTop: "1px solid var(--border)" }}>
       <div style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.6 }}>
-        <strong style={{ color: "var(--text)" }}>Codice tributo F24:</strong> 6031 (IVA trimestrale) — maggiorazione 1% per i contribuenti trimestrali (già inclusa nel saldo).
+        <strong style={{ color: "var(--text)" }}>Codici tributo F24:</strong> 6031, 6032, 6033 per i primi tre trimestri, 6099 per il
+        saldo annuale di marzo (che comprende il quarto), 6035 per l'acconto del 27 dicembre — maggiorazione 1% per i
+        trimestrali (già inclusa). Il quarto trimestre si paga al netto dell'acconto.
       </div>
+    </div>
+    <div className="card-body" style={{ borderTop: "1px solid var(--border)" }}>
+      <SchemeRows tax={tax} bases={["ivaPeriodo"]} fiscalYear={fiscalYear} onMark={onMark} onUnmark={onUnmark} />
     </div>
   </div>
 );
@@ -694,6 +721,51 @@ const RateFromSettings = ({ label, value }) => (
     <span style={{ fontSize: 11, color: "var(--text-muted)" }}>Impostazioni → Fiscalità</span>
   </div>
 );
+
+// Le scadenze dello schema per i tributi con una certa base, con lo stato preso
+// dalla riga registrata (per slot). Sostituisce le righe fisse 40/60 e le due
+// metà dei contributi: con lo schema le rate sono quante e come le dichiari.
+const SchemeRows = ({ tax, bases, fiscalYear, onMark, onUnmark }) => {
+  const tributi = ((tax.scheme && tax.scheme.tributi) || []).filter(t => bases.includes(t.base));
+  if (!tributi.length) return null;
+  const year = String(fiscalYear);
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      {tributi.map(t => {
+        const rows = (tax.f24All || [])
+          .filter(f => f.tributo === t.id && f.slot && String(f.slot).endsWith("/" + year))
+          .sort((a, b) => String(a.date).localeCompare(String(b.date)));
+        const nessunAcconto = t.kind !== "iva" && (!t.acconti || t.acconti.metodo !== "storico");
+        const credito = tax.crediti && tax.crediti[t.id];
+        return (
+          <div key={t.id}>
+            <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>{t.label}</div>
+            {nessunAcconto && !(t.righe || []).some(r => r.quota === "corrente") && (
+              <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 6 }}>
+                Nessun acconto previsto: l'imposta dell'anno si versa tutta a saldo.
+              </div>
+            )}
+            {rows.map(f => (
+              <div key={f.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12.5, marginBottom: 6, gap: 8 }}>
+                <span>
+                  {f.desc} · entro {new Date(f.date).toLocaleDateString("it-IT", { day: "2-digit", month: "short", year: "numeric" })}
+                  {" · "}<span className="mono">{f.code || "codice da indicare"}</span>
+                  {" · "}<span className="mono">{fmtEUR(f.amount)}</span>
+                </span>
+                {onMark && (f.status === "paid"
+                  ? <button className="btn btn-sm btn-primary" onClick={() => onUnmark(f)}>✓ Versato</button>
+                  : <button className="btn btn-sm" onClick={() => onMark(f)}>Da versare</button>)}
+              </div>
+            ))}
+            {credito > 0 && (
+              <div style={{ fontSize: 12.5, color: "var(--success)" }}>Credito {fmtEUR(credito)}: gli acconti superano il dovuto.</div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+};
 
 const AccontoDelta = ({ dovuto, acconti, delta }) => (
   <div style={{ marginTop: 10, paddingTop: 8, borderTop: "1px dashed var(--border)", fontSize: 12 }}>
@@ -750,7 +822,7 @@ const IrpefBase = ({ tax }) => {
   );
 };
 
-const TaxIRPEF = ({ tax, fiscal }) => (
+const TaxIRPEF = ({ tax, fiscal, fiscalYear, onMark, onUnmark }) => (
   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
     <div className="card">
       <div className="card-header"><h3>Calcolo IRPEF a scaglioni</h3></div>
@@ -823,15 +895,9 @@ const TaxIRPEF = ({ tax, fiscal }) => (
                 ? <span className="badge badge-success" style={{ marginLeft: 6 }}>da fatture {tax.prevYr}</span>
                 : <span className="badge" style={{ marginLeft: 6 }}>stima inserita a mano</span>}
             </div>
-            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, marginBottom: 6 }}>
-              <span>1° acconto (40%) · entro 30 giu · {fmtEUR(tax.accontiIrpef * 0.4)}</span>
-              <span>{fiscal.irpefAcconto1Paid ? <span className="badge badge-success badge-dot">versato</span> : <span className="badge badge-warning">da pagare</span>}</span>
-            </div>
-            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5 }}>
-              <span>2° acconto (60%) · entro 30 nov · {fmtEUR(tax.accontiIrpef * 0.6)}</span>
-              <span>{fiscal.irpefAcconto2Paid ? <span className="badge badge-success badge-dot">versato</span> : <span className="badge badge-warning">da pagare</span>}</span>
-            </div>
-            <AccontoDelta dovuto={tax.irpefNetta} acconti={tax.accontiIrpef} delta={tax.saldoIrpef} />
+            <SchemeRows tax={tax} bases={["irpef", "addReg", "addCom"]} fiscalYear={fiscalYear} onMark={onMark} onUnmark={onUnmark} />
+            {/* Il saldo IRPEF chiude la sola IRPEF: le addizionali hanno saldi e codici propri. */}
+            <AccontoDelta dovuto={tax.irpefSola} acconti={tax.accontiIrpef} delta={tax.saldoIrpef} />
           </div>
 
           <div style={{ padding: 14, background: "oklch(0.97 0.04 145)", border: "1px solid oklch(0.85 0.10 145)", borderRadius: 4, fontSize: 12.5 }}>
@@ -879,7 +945,7 @@ const TaxIRPEF = ({ tax, fiscal }) => (
 );
 
 // ===== Cassa =====
-const TaxCassa = ({ tax, fiscal, studio, onUpdateFiscal }) => {
+const TaxCassa = ({ tax, fiscal, studio, fiscalYear, onMark, onUnmark }) => {
   const cassaName = studio?.cassaName || "Cassa previdenziale";
   // Default aliquote per cassa
   const cassaDefaults = {
@@ -893,7 +959,6 @@ const TaxCassa = ({ tax, fiscal, studio, onUpdateFiscal }) => {
   const def = cassaDefaults[cassaName] || { sogg: 14.5, integ: 4, note: "" };
   const integPct = def.integ;
 
-  const updateFiscal = (patch) => onUpdateFiscal && onUpdateFiscal({ ...fiscal, ...patch });
 
   return (
   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
@@ -938,21 +1003,10 @@ const TaxCassa = ({ tax, fiscal, studio, onUpdateFiscal }) => {
                 ? <span className="badge badge-success" style={{ marginLeft: 6 }}>da fatture {tax.prevYr}</span>
                 : <span className="badge" style={{ marginLeft: 6 }}>stima inserita a mano</span>}
             </div>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12.5, marginBottom: 6 }}>
-              <span>1ª rata · 30 giu · {fmtEUR(tax.accontiCassa / 2)}</span>
-              <button className={"btn btn-sm " + (fiscal.cassaAcconto1Paid ? "btn-primary" : "")}
-                onClick={() => updateFiscal({ cassaAcconto1Paid: !fiscal.cassaAcconto1Paid })}>
-                {fiscal.cassaAcconto1Paid ? "✓ Versato" : "Da versare"}
-              </button>
-            </div>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12.5 }}>
-              <span>2ª rata · 30 nov · {fmtEUR(tax.accontiCassa / 2)}</span>
-              <button className={"btn btn-sm " + (fiscal.cassaAcconto2Paid ? "btn-primary" : "")}
-                onClick={() => updateFiscal({ cassaAcconto2Paid: !fiscal.cassaAcconto2Paid })}>
-                {fiscal.cassaAcconto2Paid ? "✓ Versato" : "Da versare"}
-              </button>
-            </div>
-            <AccontoDelta dovuto={tax.contribCassa} acconti={tax.accontiCassa} delta={tax.saldoCassa} />
+            <SchemeRows tax={tax} bases={["contribCassa", "contribFisso", "contribVar"]} fiscalYear={fiscalYear} onMark={onMark} onUnmark={onUnmark} />
+            {tax.tipo === "professionista" && (
+              <AccontoDelta dovuto={tax.contribCassa} acconti={tax.accontiCassa} delta={tax.saldoCassa} />
+            )}
           </div>
         </div>
       </div>
@@ -992,7 +1046,7 @@ const TaxCassa = ({ tax, fiscal, studio, onUpdateFiscal }) => {
 };
 
 // ===== IRAP (solo ditta individuale) =====
-const TaxIRAP = ({ tax, fiscal, fiscalYear, onUpdateFiscal }) => (
+const TaxIRAP = ({ tax, fiscal, fiscalYear, onMark, onUnmark }) => (
   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
     <div className="card">
       <div className="card-header">
@@ -1032,16 +1086,7 @@ const TaxIRAP = ({ tax, fiscal, fiscalYear, onUpdateFiscal }) => (
       <div className="card-header"><h3>Scadenze IRAP {fiscalYear}</h3></div>
       <div className="card-body">
         <div style={{ display: "flex", flexDirection: "column", gap: 10, fontSize: 12.5 }}>
-          <div style={{ padding: "10px 12px", background: "var(--bg-sunken)", borderRadius: 4 }}>
-            <div style={{ fontWeight: 600, marginBottom: 4 }}>Saldo {parseInt(fiscalYear)-1} + 1° acconto {fiscalYear}</div>
-            <div style={{ color: "var(--text-secondary)" }}>Entro il 30 giugno · cod. tributo 3800</div>
-            <div className="mono" style={{ marginTop: 4, fontWeight: 600 }}>{fmtEUR(tax.irap * 0.4)}</div>
-          </div>
-          <div style={{ padding: "10px 12px", background: "var(--bg-sunken)", borderRadius: 4 }}>
-            <div style={{ fontWeight: 600, marginBottom: 4 }}>2° acconto {fiscalYear}</div>
-            <div style={{ color: "var(--text-secondary)" }}>Entro il 30 novembre · cod. tributo 3800</div>
-            <div className="mono" style={{ marginTop: 4, fontWeight: 600 }}>{fmtEUR(tax.irap * 0.6)}</div>
-          </div>
+          <SchemeRows tax={tax} bases={["irap"]} fiscalYear={fiscalYear} onMark={onMark} onUnmark={onUnmark} />
           <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 8 }}>Codice regione: dipende dalla regione di domicilio fiscale.</div>
         </div>
       </div>
@@ -1050,7 +1095,7 @@ const TaxIRAP = ({ tax, fiscal, fiscalYear, onUpdateFiscal }) => (
 );
 
 // ===== F24 calendar =====
-const TaxF24 = ({ fiscal, tax, fiscalYear, onUpdateFiscal }) => {
+const TaxF24 = ({ fiscal, tax, fiscalYear, onUpdateFiscal, onMark }) => {
   const months = ["Gen", "Feb", "Mar", "Apr", "Mag", "Giu", "Lug", "Ago", "Set", "Ott", "Nov", "Dic"];
   const currentRealMonth = new Date().getMonth();
   const allF24 = tax.f24All || [];
@@ -1061,22 +1106,7 @@ const TaxF24 = ({ fiscal, tax, fiscalYear, onUpdateFiscal }) => {
     byMonth[m].push(f);
   });
 
-  const markPaid = (id) => {
-    if (!onUpdateFiscal) return;
-    const now = new Date().toISOString().slice(0, 10);
-    // If it's a generated entry (_generated), move it into fiscal.f24History as confirmed paid
-    const existing = allF24.find(f => f.id === id);
-    if (!existing) return;
-    // Passa da upsertF24Entry come ogni altra scrittura: normalizza l'id (una
-    // voce calcolata ne porta uno che comincia con "_") e toglie _generated.
-    // Lo slot e il tributo vengono con la proposta: sono loro, non la data, a
-    // collegare il versamento alla sua scadenza e a dire cosa deduce.
-    const anno = existing.slot ? Number(String(existing.slot).split("/")[2]) : undefined;
-    onUpdateFiscal({
-      ...fiscal,
-      f24History: window.upsertF24Entry(fiscal.f24History || [], { ...existing, anno, status: "paid", paidDate: now }),
-    });
-  };
+  const markPaid = (id) => onMark && onMark(allF24.find(f => f.id === id));
 
   // ── Voci registrate a mano ───────────────────────────────────────────────
   // Senza questo l'unico gesto possibile era spuntare "Versato" su una riga
