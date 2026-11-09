@@ -142,7 +142,26 @@ const App = () => {
       setSupplierRules(data.supplierRules || {});
       setCategories(data.categories || {});
       setStudio(data.studio    || window.APP_DATA.user);
-      setFiscal(data.fiscal    || window.APP_DATA.fiscal);
+      // Scadenzario F24: le spunte "Versato" diventano righe registrate e le
+      // righe di prima ricevono tributo, slot e anno. Serve computeTaxes per
+      // gli importi, quindi gira qui, con tutti i dati caricati; è idempotente,
+      // e l'effetto che salva `fiscal` scrive il risultato.
+      const loadedFiscal = data.fiscal || window.APP_DATA.fiscal;
+      const loadedStudio = data.studio || window.APP_DATA.user;
+      let migratedFiscal = loadedFiscal;
+      try {
+        const res = window.migrateFiscalWithData({
+          fiscal: loadedFiscal, studio: loadedStudio, now: new Date(),
+          activities: data.activities, expenses: data.expenses, clients: data.clients, invoices: data.invoices,
+        });
+        if (res.log.length) console.info('[migrazione F24]\n' + res.log.join('\n'));
+        migratedFiscal = res.fiscal;
+      } catch (e) {
+        // Una migrazione che fallisce non deve impedire di aprire l'app: i dati
+        // restano quelli di prima, che computeTaxes sa ancora leggere.
+        console.error('[migrazione F24] non riuscita, dati lasciati invariati', e);
+      }
+      setFiscal(migratedFiscal);
       setLoaded(true);
     }
     init();

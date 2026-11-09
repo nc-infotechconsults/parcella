@@ -462,7 +462,7 @@ const FiscalRatesCard = ({ fisc, studio, onChange }) => {
               value={fisc.cassaContribPct} fallback={suggerita || 14.5} step="0.01" max={50}
               onChange={v => onChange({ cassaContribPct: v })} />
           )}
-          {tipo === "professionista" && (
+          {tipo === "professionista" && !fisc.scadenzario && (
             <PctField
               label="Acconto contributi, % dell'anno precedente"
               hint={isGS
@@ -556,6 +556,12 @@ const FiscalRatesCard = ({ fisc, studio, onChange }) => {
           </button>
         </div>
 
+        {fisc.scadenzario ? (
+          <div style={{ marginTop: 24, paddingTop: 20, borderTop: "1px solid var(--border)", fontSize: 12.5, color: "var(--text-secondary)" }}>
+            Percentuale e base degli acconti si impostano nello{" "}
+            <a href="#scadenzario-f24" onClick={e => { e.preventDefault(); const el = document.getElementById("scadenzario-f24"); if (el) el.scrollIntoView({ behavior: "smooth" }); }}>Scadenzario F24</a>.
+          </div>
+        ) : (
         <div style={{ marginTop: 24, paddingTop: 20, borderTop: "1px solid var(--border)" }}>
           <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 4 }}>Base per gli acconti</div>
           <div className="hint" style={{ marginBottom: 10 }}>
@@ -571,6 +577,291 @@ const FiscalRatesCard = ({ fisc, studio, onChange }) => {
               onChange={v => onChange({ cassaPrevYear: v })} />
           </div>
         </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// ── Scadenzario F24 ─────────────────────────────────────────────────────────
+// Le scadenze di ogni tributo come dati: base, acconti, rate, saldo. Parte dal
+// preset che corrisponde allo studio; salvato, non lo segue più. Uno schema con
+// errori non si salva. Spec: docs/superpowers/specs/2026-11-08-f24-scadenzario-design.md
+const PRESET_LABELS = {
+  "professionista-gs": "Professionista · Gestione Separata INPS",
+  "professionista-cassa": "Professionista · cassa privata",
+  "ditta": "Ditta individuale",
+  "solo-iva": "Solo IVA (società)",
+};
+const BASE_LABELS = {
+  irpef: "IRPEF netta (senza addizionali)", addReg: "Addizionale regionale", addCom: "Addizionale comunale",
+  contribCassa: "Contributo cassa / GS", contribFisso: "INPS minimale", contribVar: "INPS eccedente",
+  irap: "IRAP", ivaPeriodo: "IVA per periodo",
+};
+const SEZIONE_LABELS = { erario: "Erario", inps: "INPS", regioni: "Regioni", locali: "Tributi locali", "altri-enti": "Altri enti previdenziali" };
+
+const ScadenzarioCard = ({ fisc, studio, onSaveScheme }) => {
+  const active = window.activeScheme(fisc, studio);
+  const clone = x => JSON.parse(JSON.stringify(x));
+  // Uno schema salvato non valido si mostra com'è, perché lo si possa
+  // correggere (i calcoli intanto usano il preset). Gli elementi che non sono
+  // oggetti non si possono mostrare né correggere: si tolgono.
+  const repaired = sc => {
+    const obj = x => x && typeof x === "object";
+    const c = clone(sc);
+    c.tributi = (Array.isArray(c.tributi) ? c.tributi : []).filter(obj).map(t => ({
+      ...t,
+      ...(Array.isArray(t.righe) ? { righe: t.righe.filter(obj) } : {}),
+      ...(Array.isArray(t.periodi) ? { periodi: t.periodi.filter(obj) } : {}),
+    }));
+    return c;
+  };
+  const baseline = active.invalid ? repaired(fisc.scadenzario) : active.scheme;
+  const [draft, setDraft] = useState(() => clone(baseline));
+  const [open, setOpen] = useState({});
+  const res = window.validateScheme(draft);
+  const errorAt = path => (res.errors.find(e => e.path === path) || {}).message;
+  const linked = id => (fisc.f24History || []).some(f => f.tributo === id);
+  const dirty = active.invalid || JSON.stringify(draft) !== JSON.stringify(active.scheme);
+
+  const setT = (ti, patch) => setDraft(d => ({ ...d, tributi: d.tributi.map((t, i) => (i === ti ? { ...t, ...patch } : t)) }));
+  const setSub = (ti, key, patch) => setDraft(d => ({
+    ...d, tributi: d.tributi.map((t, i) => (i === ti ? { ...t, [key]: { ...(t[key] || {}), ...patch } } : t)),
+  }));
+  const setRow = (ti, list, ri, patch) => setDraft(d => ({
+    ...d, tributi: d.tributi.map((t, i) => (i !== ti ? t
+      : { ...t, [list]: t[list].map((r, j) => (j === ri ? { ...r, ...patch } : r)) })),
+  }));
+  const freeId = (taken, prefix) => { let n = 1; while (taken.includes(prefix + n)) n++; return prefix + n; };
+  const addRow = ti => setDraft(d => ({
+    ...d, tributi: d.tributi.map((t, i) => {
+      if (i !== ti) return t;
+      if (t.kind === "iva") {
+        const id = freeId((t.periodi || []).map(p => p.id), "p");
+        return { ...t, periodi: [...(t.periodi || []), { id, months: [], date: "01-16", yearOffset: 0, code: "", label: "" }] };
+      }
+      const id = freeId((t.righe || []).map(r => r.id), "r");
+      return { ...t, righe: [...(t.righe || []), { id, quota: "corrente", share: 100, date: "06-30", yearOffset: 0, code: "", label: "" }] };
+    }),
+  }));
+  const removeRow = (ti, list, ri) => setDraft(d => ({
+    ...d, tributi: d.tributi.map((t, i) => (i !== ti ? t : { ...t, [list]: t[list].filter((_, j) => j !== ri) })),
+  }));
+  const addTributo = () => setDraft(d => {
+    const id = freeId(d.tributi.map(t => t.id), "t");
+    return {
+      ...d, tributi: [...d.tributi, {
+        id, label: "Nuovo tributo", kind: "imposta", base: "irpef", sezione: "erario",
+        acconti: { metodo: "nessuno", fallbackPrevYear: 0, soglia: 0 },
+        righe: [{ id: "saldo", quota: "saldo", date: "06-30", yearOffset: 1, code: "", label: "Saldo {anno}" }],
+      }],
+    };
+  });
+  const removeTributo = ti => {
+    const t = draft.tributi[ti];
+    if (linked(t.id) && !window.confirm(`Ci sono voci F24 registrate per "${t.label}". Resteranno come voci senza tributo e smetteranno di contare nei calcoli. Toglierlo comunque?`)) return;
+    setDraft(d => ({ ...d, tributi: d.tributi.filter((_, i) => i !== ti) }));
+  };
+  const pickPreset = id => {
+    if (!window.confirm("Sostituire lo scadenzario con il preset scelto? Le modifiche non salvate si perdono.")) return;
+    setDraft(window.presetScheme(id, fisc, studio));
+  };
+  const restore = () => {
+    if (!window.confirm("Tornare al preset dello studio? Lo scadenzario salvato verrà tolto.")) return;
+    onSaveScheme(undefined);
+    setDraft(clone(window.presetScheme(window.presetIdFor(studio), { ...fisc, scadenzario: undefined }, studio)));
+  };
+
+  const Err = ({ path }) => (errorAt(path)
+    ? <div style={{ color: "var(--danger)", fontSize: 11, marginTop: 2 }}>{errorAt(path)}</div> : null);
+  const num = v => (v === "" ? "" : Number(v));
+  const cell = { padding: "4px 6px", verticalAlign: "top" };
+
+  return (
+    <div className="card" id="scadenzario-f24" style={{ gridColumn: "1 / -1" }}>
+      <div className="card-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <div>
+          <h3>Scadenzario F24</h3>
+          <div className="subtitle">
+            {active.invalid ? "Schema salvato, da correggere" : active.source === "saved" ? "Schema salvato" : "Preset dello studio"} · le scadenze di ogni tributo, i codici e come si calcolano
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <select className="select" value={draft.preset || ""} onChange={e => pickPreset(e.target.value)}>
+            {Object.entries(PRESET_LABELS).map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+          </select>
+          {fisc.scadenzario && <button className="btn btn-sm" onClick={restore}>Ripristina</button>}
+          <button className="btn btn-primary btn-sm" disabled={!res.ok || !dirty}
+            title={res.ok ? "" : "Correggi gli errori indicati prima di salvare"}
+            onClick={() => onSaveScheme(clone(draft))}>Salva scadenzario</button>
+        </div>
+      </div>
+      <div className="card-body">
+        {active.warning && (
+          <div style={{ padding: "8px 10px", background: "oklch(0.97 0.05 80)", borderRadius: 4, fontSize: 12.5, marginBottom: 12 }}>{active.warning}</div>
+        )}
+        {draft.tributi.map((t, ti) => {
+          const isOpen = !!open[t.id];
+          const isIva = t.kind === "iva";
+          const p = `tributi[${ti}]`;
+          const hasErr = res.errors.some(e => e.path === p || e.path.startsWith(p + "."));
+          return (
+            <div key={t.id} style={{ border: "1px solid " + (hasErr ? "var(--danger)" : "var(--border)"), borderRadius: 4, marginBottom: 8 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", cursor: "pointer" }}
+                onClick={() => setOpen(o => ({ ...o, [t.id]: !isOpen }))}>
+                <span style={{ width: 12 }}>{isOpen ? "▾" : "▸"}</span>
+                <strong style={{ flex: "0 0 200px" }}>{t.label}</strong>
+                <span style={{ fontSize: 12, color: "var(--text-secondary)", flex: 1 }}>
+                  {BASE_LABELS[t.base] || t.base}
+                  {" · "}
+                  {isIva
+                    ? `${(t.periodi || []).length} periodi${t.acconto && t.acconto.metodo === "storico" ? ", acconto " + t.acconto.pct + "%" : ""}`
+                    : (t.acconti && t.acconti.metodo === "storico" ? `acconti storici ${t.acconti.pct}%` : "nessun acconto")}
+                </span>
+                <button className="btn btn-sm btn-danger" title="Togli il tributo"
+                  onClick={e => { e.stopPropagation(); removeTributo(ti); }}>✕</button>
+              </div>
+              {isOpen && (
+                <div style={{ padding: "4px 12px 12px", borderTop: "1px solid var(--border)" }}>
+                  <div className="form-grid" style={{ gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginTop: 8 }}>
+                    <div className="field"><label>Nome</label>
+                      <input className="input" value={t.label} onChange={e => setT(ti, { label: e.target.value })} /></div>
+                    <div className="field"><label>Tipo</label>
+                      <select className="select" value={t.kind} onChange={e => setT(ti, { kind: e.target.value })}>
+                        <option value="imposta">Imposta</option><option value="contributo">Contributo (deducibile)</option><option value="iva">IVA</option>
+                      </select><Err path={`${p}.kind`} /></div>
+                    <div className="field"><label>Base</label>
+                      <select className="select" value={t.base} onChange={e => setT(ti, { base: e.target.value })}>
+                        {window.SCHEME_BASES.map(b => <option key={b} value={b}>{BASE_LABELS[b] || b}</option>)}
+                      </select><Err path={`${p}.base`} /></div>
+                    <div className="field"><label>Sezione F24</label>
+                      <select className="select" value={t.sezione || ""} onChange={e => setT(ti, { sezione: e.target.value || undefined })}>
+                        {window.SCHEME_SEZIONI.map(z => <option key={z} value={z}>{SEZIONE_LABELS[z]}</option>)}
+                      </select></div>
+                  </div>
+
+                  {!isIva && (
+                    <div className="form-grid" style={{ gridTemplateColumns: "repeat(4, 1fr)", gap: 10 }}>
+                      <div className="field"><label>Acconti</label>
+                        <select className="select" value={(t.acconti || {}).metodo || "nessuno"}
+                          onChange={e => {
+                            const metodo = e.target.value;
+                            // Senza acconti le rate di acconto non hanno senso: si tolgono
+                            // con la scelta, invece di lasciare uno schema in errore.
+                            setDraft(d => ({ ...d, tributi: d.tributi.map((x, i) => (i !== ti ? x : {
+                              ...x,
+                              acconti: { ...(x.acconti || {}), metodo, pct: (x.acconti || {}).pct == null ? 100 : x.acconti.pct },
+                              righe: metodo === "nessuno" ? (x.righe || []).filter(r => r.quota !== "acconto") : x.righe,
+                            })) }));
+                          }}>
+                          <option value="nessuno">Nessuno: tutto a saldo</option><option value="storico">Storico, sull'anno prima</option>
+                        </select><Err path={`${p}.acconti.metodo`} /></div>
+                      {(t.acconti || {}).metodo === "storico" && (
+                        <React.Fragment>
+                          <div className="field"><label>% della base dell'anno prima</label>
+                            <input className="input mono" type="number" value={t.acconti.pct == null ? "" : t.acconti.pct}
+                              onChange={e => setSub(ti, "acconti", { pct: num(e.target.value) })} /><Err path={`${p}.acconti.pct`} /></div>
+                          <div className="field"><label>Base anno prima se mancano le fatture (€)</label>
+                            <input className="input mono" type="number" value={t.acconti.fallbackPrevYear == null ? "" : t.acconti.fallbackPrevYear}
+                              onChange={e => setSub(ti, "acconti", { fallbackPrevYear: num(e.target.value) })} /><Err path={`${p}.acconti.fallbackPrevYear`} />
+                            {t.base === "irpef" && <div className="hint">IRPEF senza addizionali.</div>}</div>
+                          <div className="field"><label>Soglia minima (€)</label>
+                            <input className="input mono" type="number" value={t.acconti.soglia == null ? "" : t.acconti.soglia}
+                              onChange={e => setSub(ti, "acconti", { soglia: num(e.target.value) })} /><Err path={`${p}.acconti.soglia`} /></div>
+                        </React.Fragment>
+                      )}
+                    </div>
+                  )}
+
+                  {isIva && (
+                    <div className="form-grid" style={{ gridTemplateColumns: "repeat(4, 1fr)", gap: 10 }}>
+                      <div className="field"><label>Maggiorazione %</label>
+                        <input className="input mono" type="number" value={t.maggiorazionePct == null ? "" : t.maggiorazionePct}
+                          onChange={e => setT(ti, { maggiorazionePct: num(e.target.value) })} /><Err path={`${p}.maggiorazionePct`} /></div>
+                      <div className="field"><label>Acconto di dicembre</label>
+                        <select className="select" value={(t.acconto || {}).metodo || "nessuno"}
+                          onChange={e => setSub(ti, "acconto", { metodo: e.target.value })}>
+                          <option value="nessuno">Nessuno</option><option value="storico">Storico (88%)</option>
+                        </select></div>
+                      {t.acconto && t.acconto.metodo === "storico" && (
+                        <React.Fragment>
+                          <div className="field"><label>Base anno prima se mancano le fatture (€)</label>
+                            <input className="input mono" type="number" value={t.acconto.fallbackPrevYear == null ? "" : t.acconto.fallbackPrevYear}
+                              onChange={e => setSub(ti, "acconto", { fallbackPrevYear: num(e.target.value) })} />
+                            <div className="hint">Il versamento dell'ultimo periodo dell'anno prima.</div><Err path={`${p}.acconto.fallbackPrevYear`} /></div>
+                          <div className="field"><label>Scala dal periodo</label>
+                            <select className="select" value={t.acconto.periodo || ""} onChange={e => setSub(ti, "acconto", { periodo: e.target.value })}>
+                              {(t.periodi || []).map(per => <option key={per.id} value={per.id}>{per.label.replace("{anno}", "") || per.id}</option>)}
+                            </select><Err path={`${p}.acconto.periodo`} /></div>
+                        </React.Fragment>
+                      )}
+                    </div>
+                  )}
+
+                  <table className="data" style={{ marginTop: 6 }}>
+                    <thead><tr>
+                      {isIva && <th>Mesi</th>}
+                      <th>Data (gg/mm)</th><th>Anno</th><th>Codice</th><th>Descrizione</th>
+                      {!isIva && <th>Quota</th>}{!isIva && <th>%</th>}<th></th>
+                    </tr></thead>
+                    <tbody>
+                      {(isIva ? (t.periodi || []) : (t.righe || [])).map((r, ri) => {
+                        const list = isIva ? "periodi" : "righe";
+                        const q = `${p}.${list}[${ri}]`;
+                        const [mm, dd] = String(r.date || "").split("-");
+                        return (
+                          <tr key={r.id}>
+                            {isIva && <td style={cell}>
+                              <input className="input mono" style={{ width: 110 }} value={(r.months || []).join(",")}
+                                onChange={e => setRow(ti, list, ri, { months: e.target.value.split(",").map(x => x.trim()).filter(Boolean).map(x => x.padStart(2, "0")) })} />
+                              <Err path={`${q}.months`} /></td>}
+                            <td style={cell}>
+                              <input className="input mono" style={{ width: 80 }} placeholder="30/06" value={dd != null ? `${dd}/${mm}` : ""}
+                                onChange={e => {
+                                  const [g, m] = e.target.value.split("/");
+                                  setRow(ti, list, ri, { date: `${String(m || "").padStart(2, "0")}-${String(g || "").padStart(2, "0")}` });
+                                }} />
+                              <Err path={`${q}.date`} /></td>
+                            <td style={cell}>
+                              <select className="select" value={r.yearOffset || 0} onChange={e => setRow(ti, list, ri, { yearOffset: Number(e.target.value) })}>
+                                <option value={0}>stesso</option><option value={1}>dopo</option>
+                              </select></td>
+                            <td style={cell}>
+                              <input className="input mono" style={{ width: 80 }} value={r.code || ""} placeholder={t.sezione === "altri-enti" ? "da indicare" : ""}
+                                onChange={e => setRow(ti, list, ri, { code: e.target.value.trim().toUpperCase() })} />
+                              <Err path={`${q}.code`} /></td>
+                            <td style={cell}>
+                              <input className="input" value={r.label || ""} onChange={e => setRow(ti, list, ri, { label: e.target.value })} />
+                              <div className="hint">{"{anno}"} diventa l'anno fiscale</div></td>
+                            {!isIva && <td style={cell}>
+                              <select className="select" value={r.quota} onChange={e => setRow(ti, list, ri, { quota: e.target.value })}>
+                                <option value="acconto">Acconto</option><option value="corrente">Rata dell'anno</option><option value="saldo">Saldo</option>
+                              </select><Err path={`${q}.quota`} /></td>}
+                            {!isIva && <td style={cell}>
+                              {r.quota !== "saldo" && <input className="input mono" type="number" style={{ width: 70 }} value={r.share == null ? "" : r.share}
+                                onChange={e => setRow(ti, list, ri, { share: num(e.target.value) })} />}
+                              <Err path={`${q}.share`} /></td>}
+                            <td style={cell}><button className="btn btn-sm btn-danger" onClick={() => removeRow(ti, list, ri)}>✕</button></td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                  <button className="btn btn-sm" style={{ marginTop: 8 }} onClick={() => addRow(ti)}>+ {isIva ? "periodo" : "riga"}</button>
+                </div>
+              )}
+            </div>
+          );
+        })}
+        <button className="btn btn-sm" onClick={addTributo}>+ tributo</button>
+        {res.warnings.map(w => (
+          <div key={w.path} style={{ marginTop: 8, fontSize: 12, color: "#92400e" }}>⚠ {w.message}</div>
+        ))}
+        {!res.ok && (
+          <div style={{ marginTop: 8, fontSize: 12, color: "var(--danger)" }}>
+            {res.errors.length} {res.errors.length === 1 ? "errore" : "errori"} da correggere prima di salvare.
+          </div>
+        )}
       </div>
     </div>
   );
@@ -587,6 +878,14 @@ const Settings = ({ user, onSave, onResetData, categories, invoices, expenses, o
   const [fiscPatch, setFiscPatch] = useState({});
   const fisc = { ...(fiscal || {}), ...fiscPatch };
   const updateFisc = (patch) => setFiscPatch(p => ({ ...p, ...patch }));
+
+  // Lo scadenzario si salva da solo, col suo pulsante: si scrive subito e si
+  // tiene anche nella patch, così il Salva della pagina non lo riporta indietro.
+  const saveScheme = (scheme) => {
+    updateFisc({ scadenzario: scheme });
+    if (onSaveFiscal) onSaveFiscal({ ...(fiscal || {}), ...fiscPatch, scadenzario: scheme });
+    window.showToast && window.showToast(scheme ? "Scadenzario salvato" : "Scadenzario riportato al preset", "success");
+  };
 
   const handleSave = () => {
     onSave(data);
@@ -706,6 +1005,9 @@ const Settings = ({ user, onSave, onResetData, categories, invoices, expenses, o
           </div>
 
           <FiscalRatesCard fisc={fisc} studio={data} onChange={updateFisc} />
+
+          <ScadenzarioCard key={(fisc.scadenzario ? "saved" : "preset") + ":" + (window.presetIdFor(data))}
+            fisc={fisc} studio={data} onSaveScheme={saveScheme} />
 
           <div className="card">
             <div className="card-header"><h3>Coordinate bancarie</h3></div>

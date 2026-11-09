@@ -76,6 +76,11 @@ function taxLiability(fy, fiscal, tipo, contributiVersati) {
   const addCom = redditoImpIrpef * aliquote.addComPct / 100;
   const irpefLordaTot = irpefLorda + addReg + addCom;
 
+  // Le ritenute d'acconto subite si scomputano dall'IRPEF e da nient'altro: le
+  // addizionali restano dovute per intero e si pagano con codici propri. Prima
+  // le ritenute si toglievano dal totale IRPEF + addizionali, e un'eccedenza di
+  // ritenute sull'IRPEF faceva sparire anche le addizionali.
+  const irpefSola = r2(Math.max(0, irpefLorda - ritenuta));
   return {
     aliquote, brackets,
     compensi, costiDeducibili, costiEsercizio, quoteAmmortamento, ritenuta,
@@ -83,8 +88,9 @@ function taxLiability(fy, fiscal, tipo, contributiVersati) {
     reddNettoLordoCassa,
     contribCassa: r2(contribCassa), contribFisso, contribVar, irapBase, irap,
     redditoImpIrpef, irpefLorda, addReg, addCom, irpefLordaTot,
-    irpefNetta: r2(Math.max(0, irpefLordaTot - ritenuta)),
-    ritenutaCredito: Math.max(0, ritenuta - irpefLordaTot),
+    irpefSola, addRegDovuta: r2(addReg), addComDovuta: r2(addCom),
+    irpefNetta: r2(irpefSola + addReg + addCom),
+    ritenutaCredito: Math.max(0, ritenuta - irpefLorda),
   };
 }
 window.taxLiability = taxLiability;
@@ -148,64 +154,59 @@ function computeTaxes(activities, expenses, fiscal, year, clients, studio, invoi
   // ── Costi deducibili ──────────────────────────────────────────────────────
   const costiDeducibili = fy.consuntivo.costiDeducibili;
 
+  // ── Scadenzario ───────────────────────────────────────────────────────────
+  // Le scadenze vengono dallo schema (f24-scheme.js): qui si calcola soltanto
+  // QUANTO si deve. Le righe registrate sono l'unica fonte dei versamenti.
+  const { scheme, source: schemeSource, warning: schemeWarning } = window.activeScheme(fiscal, studio);
+  const amountOf = window.amountOf;
+  const isFact = f => f.status === "paid" || f.status === "scheduled";
+  // Una riga scritta prima dello scadenzario non dice a quale tributo
+  // appartiene. La migrazione glielo assegna al caricamento; finché non l'ha
+  // fatto, il tributo si deduce dal codice come lo usava l'app di prima, così i
+  // numeri di chi non ha ancora migrato restano quelli di oggi. Una riga a cui
+  // la migrazione non ha saputo dare un tributo porta tributo: null, e non deduce.
+  const recorded = (fiscal.f24History || []).map(f => (f.tributo === undefined
+    ? { ...f, tributo: window.inferTributo(f.code, scheme, { legacy: true }) }
+    : f));
+
   // ── Contributi versati (deduzione per cassa) ──────────────────────────────
-  // Il contributo previdenziale si deduce nell'anno in cui lo VERSI, quindi la
-  // deduzione si legge dai versamenti, non da un'aliquota: è la somma dei
-  // tributi contributivi pagati con data in quell'anno.
-  const CONTRIB_CODES = new Set(["3801", "0601"]);
-  const recorded = fiscal.f24History || [];
-  const key = f => f.date + "|" + f.code;
+  // Il contributo previdenziale si deduce nell'anno in cui lo VERSI: è la somma
+  // delle righe versate quell'anno il cui tributo, nello schema, è un
+  // contributo. Decide il tributo, non il codice: il 3801 che l'app usava per i
+  // contributi è in realtà l'addizionale regionale.
   const contributiPagatiIn = (anno) => round2(recorded
     .filter(f => f.status === "paid"
-      && CONTRIB_CODES.has(String(f.code))
+      && window.kindOf(f, scheme) === "contributo"
       && String(f.date || "").startsWith(anno + "-"))
-    .reduce((s, f) => s + (Number(f.amount) || 0), 0));
+    .reduce((s, f) => s + amountOf(f.amount), 0));
 
-  // ── Acconti: metodo storico ───────────────────────────────────────────────
-  // In June you pay an instalment sized on LAST year's liability, and the
-  // difference against how this year really went is settled the June after.
-  // Where last year's documents are in the archive the base is computed from
-  // them; the stored figure is only the fallback for a first year of use.
+  // ── Anno precedente (metodo storico) ──────────────────────────────────────
+  // Gli acconti si misurano sull'anno scorso. Dove l'archivio ne contiene i
+  // documenti la base si calcola da quelli; altrimenti vale il ripiego scritto
+  // nel tributo dello schema.
   const prevYr = Number(yr) - 1;
-  // Un anno di soli costi non è un anno di cui si conoscano i compensi. La
-  // condizione guardava qualunque documento: ventidue fatture passive del 2025
-  // bastavano a far derivare la base da un anno senza ricavi, che dava zero e
-  // scavalcava in silenzio il valore scritto in Impostazioni. Da lì acconti e
-  // rate a zero, e la casella "Versato" che non deduceva nulla perché la rata
-  // da dedurre valeva zero. La prova che serve è un ricavo, non un documento.
+  // Un anno di soli costi non è un anno di cui si conoscano i compensi: la prova
+  // che serve è un ricavo, non un documento qualunque.
   const hasPrevData = (invoices || []).some(i =>
     i.direction === "active" && !i.reverseCharge && String(i.date || "").startsWith(prevYr + "-"));
   const fyPrev = hasPrevData ? window.computeFiscalYear({
     year: prevYr, invoices: invoices || [], activities, expenses, clients: _clients, fiscal,
     computeInvoiceAmounts: window.computeInvoiceAmounts,
   }) : null;
-  const prev = fyPrev
-    ? { ...taxLiability(fyPrev, fiscal, tipo, contributiPagatiIn(prevYr)), derived: true }
-    : {
-      contribCassa: Number(fiscal.cassaPrevYear) || 0,
-      irpefNetta: Number(fiscal.irpefPrevYear) || 0,
-      derived: false,
-    };
+  const prevLiab = fyPrev ? taxLiability(fyPrev, fiscal, tipo, contributiPagatiIn(prevYr)) : null;
+  const tributiByBase = base => (scheme.tributi || []).filter(t => t.base === base);
+  const fallbackOf = base => round2(tributiByBase(base)
+    .reduce((s, t) => s + amountOf(t.acconti ? t.acconti.fallbackPrevYear : 0), 0));
+  const prev = prevLiab
+    ? { ...prevLiab, derived: true }
+    : { contribCassa: fallbackOf("contribCassa"), irpefNetta: fallbackOf("irpef"), derived: false };
 
-  // La Gestione Separata INPS chiede l'80% del contributo dell'anno prima, in
-  // due rate uguali; le casse private in genere il 100% in due metà. L'IRPEF
-  // segue sempre il 100% ripartito 40/60.
   const cassaLabel = (studio && studio.cassaName) === "Gestione Separata INPS" ? "INPS" : "cassa";
-  const cassaAccontoPct = fiscal.cassaAccontoPct != null
-    ? Number(fiscal.cassaAccontoPct)
-    : ((studio && studio.cassaName) === "Gestione Separata INPS" ? 80 : 100);
-  const accontiCassa = round2(prev.contribCassa * cassaAccontoPct / 100);
-  const accontiIrpef = round2(prev.irpefNetta);
+  const cassaTributo = tributiByBase("contribCassa")[0];
+  const cassaAccontoPct = cassaTributo && cassaTributo.acconti && cassaTributo.acconti.metodo === "storico"
+    ? amountOf(cassaTributo.acconti.pct) : 0;
 
-  // Una rata spuntata "Versato" su questa schermata è un versamento anche se
-  // l'utente non ha registrato la riga F24 a mano: senza questo, spuntarla non
-  // cambiava nulla nella deduzione.
-  const rataCassa = round2(accontiCassa / 2);
-  const flagged = [
-    { date: `${Number(yr)}-06-30`, paid: fiscal.cassaAcconto1Paid },
-    { date: `${Number(yr)}-11-30`, paid: fiscal.cassaAcconto2Paid },
-  ].filter(d => d.paid && !recorded.some(f => key(f) === d.date + "|3801"));
-  const contributiVersati = round2(contributiPagatiIn(yr) + flagged.length * rataCassa);
+  const contributiVersati = contributiPagatiIn(yr);
 
   // ── Contributi e IRPEF ────────────────────────────────────────────────────
   // taxLiability() vale per qualunque anno, perché gli acconti si misurano su
@@ -217,18 +218,13 @@ function computeTaxes(activities, expenses, fiscal, year, clients, studio, invoi
     ritenutaCredito, costiEsercizio, quoteAmmortamento,
   } = cur;
 
-  // Il delta: quanto l'andamento reale di quest'anno si discosta dagli acconti
-  // già impostati sull'anno scorso. Negativo = credito, non una scadenza.
-  const saldoCassa = round2(contribCassa - accontiCassa);
-  const saldoIrpef = round2(irpefNetta - accontiIrpef);
-
   // ── IVA trimestrale ───────────────────────────────────────────────────────
   // Scadenze: professionista trimestrale con +1%; ditta può essere mensile
   const ivaDeadlines = [
-    { id: "Q1", label: "1° trim (gen-mar)", deadline: "16 maggio (+1%)", months: ["01","02","03"], paid: fiscal.ivaQ1Paid, paidAmount: fiscal.ivaQ1Amount },
-    { id: "Q2", label: "2° trim (apr-giu)", deadline: "20 agosto (+1%)", months: ["04","05","06"], paid: fiscal.ivaQ2Paid },
-    { id: "Q3", label: "3° trim (lug-set)", deadline: "16 novembre (+1%)", months: ["07","08","09"], paid: fiscal.ivaQ3Paid },
-    { id: "Q4", label: "4° trim (ott-dic)", deadline: "16 marzo anno succ.", months: ["10","11","12"], paid: fiscal.ivaQ4Paid },
+    { id: "Q1", label: "1° trim (gen-mar)", deadline: "16 maggio (+1%)", months: ["01","02","03"] },
+    { id: "Q2", label: "2° trim (apr-giu)", deadline: "20 agosto (+1%)", months: ["04","05","06"] },
+    { id: "Q3", label: "3° trim (lug-set)", deadline: "16 novembre (+1%)", months: ["07","08","09"] },
+    { id: "Q4", label: "4° trim (ott-dic)", deadline: "16 marzo anno succ.", months: ["10","11","12"] },
   ];
   const trimestri = ivaDeadlines.map(qt => {
     // computeFiscalYear returns four quarters under quarterly liquidation and
@@ -250,85 +246,56 @@ function computeTaxes(activities, expenses, fiscal, year, clients, studio, invoi
     };
   });
 
-  // ── Scadenze F24 dinamiche ────────────────────────────────────────────────
-  // Generiamo le scadenze standard per l'anno fiscale e le mergiamo con lo storico utente.
-  const y = parseInt(yr);
-  const generatedF24 = [];
-  const ivaQ1 = trimestri[0].balance;
-  const ivaQ2 = trimestri[1].balance;
-  const ivaQ3 = trimestri[2].balance;
-  const ivaQ4 = trimestri[3].balance;
-
-  // IVA trimestrale (valida per tutti i tipi con IVA)
-  if (ivaQ1 > 0) generatedF24.push({ id: "_q1", date: `${y}-05-16`, code: "6031", desc: `IVA 1° trim ${yr}`, amount: Math.round((ivaQ1 * 1.01) * 100) / 100, _generated: true });
-  if (ivaQ2 > 0) generatedF24.push({ id: "_q2", date: `${y}-08-20`, code: "6031", desc: `IVA 2° trim ${yr}`, amount: Math.round((ivaQ2 * 1.01) * 100) / 100, _generated: true });
-  if (ivaQ3 > 0) generatedF24.push({ id: "_q3", date: `${y}-11-16`, code: "6031", desc: `IVA 3° trim ${yr}`, amount: Math.round((ivaQ3 * 1.01) * 100) / 100, _generated: true });
-  if (ivaQ4 > 0) generatedF24.push({ id: "_q4", date: `${y+1}-03-16`, code: "6031", desc: `IVA 4° trim ${yr}`, amount: Math.round((ivaQ4 * 1.01) * 100) / 100, _generated: true });
-
-  // A flag the user ticked on this screen is a fact about a deadline, so it has
-  // to reach the row; otherwise an instalment already paid kept being listed as
-  // still due. A recorded F24 entry still overrides both (merge below).
-  const statusOf = flag => (flag ? "paid" : undefined);
+  // ── Scadenze F24 dallo schema ─────────────────────────────────────────────
+  const basesOf = l => ({
+    irpef: l.irpefSola, addReg: l.addRegDovuta, addCom: l.addComDovuta,
+    contribCassa: l.contribCassa, contribFisso: l.contribFisso, contribVar: l.contribVar, irap: l.irap,
+  });
+  const periodsOf = f => (f ? f.periods.map(p => ({ months: p.months, saldo: p.saldo })) : null);
   const basedOn = prev.derived ? `su ${prevYr} effettivo` : `su ${prevYr}`;
+  const schedule = rows => window.scheduleFromScheme({
+    scheme, year: parseInt(yr), bases: basesOf(cur), prevBases: prevLiab ? basesOf(prevLiab) : null,
+    ivaPeriods: periodsOf(fy), prevIvaPeriods: periodsOf(fyPrev), recorded: rows, basedOn,
+  });
 
-  // Acconti e saldo IRPEF — identici per professionista e ditta individuale.
-  // Gli acconti si misurano sull'anno scorso (metodo storico): usare l'imposta
-  // di quest'anno dava una rata di giugno che nessuno deve e che contraddiceva
-  // il riquadro accanto, che l'anno scorso lo leggeva già.
-  if (tipo === "professionista" || tipo === "ditta_individuale") {
-    generatedF24.push({ id: "_irpef_acc1", date: `${y}-06-30`, code: "4033", desc: `1° acconto IRPEF ${yr} (40% ${basedOn})`, amount: round2(accontiIrpef * 0.4), status: statusOf(fiscal.irpefAcconto1Paid), _generated: true });
-    generatedF24.push({ id: "_irpef_acc2", date: `${y}-11-30`, code: "4034", desc: `2° acconto IRPEF ${yr} (60% ${basedOn})`, amount: round2(accontiIrpef * 0.6), status: statusOf(fiscal.irpefAcconto2Paid), _generated: true });
-    // Il saldo chiude il delta fra gli acconti versati e l'imposta vera
-    // dell'anno, che le fatture importate rendono calcolabile.
-    if (saldoIrpef > 0) {
-      generatedF24.push({ id: "_irpef_saldo", date: `${y + 1}-06-30`, code: "4001", desc: `Saldo IRPEF ${yr}`, amount: saldoIrpef, _generated: true });
-    }
-  }
+  // Una riga registrata prima dello scadenzario non ha slot. Se cade nella
+  // stessa data di una proposta, con il codice nuovo o con quello che il
+  // generatore di prima le dava, è quella scadenza: prende lo slot, così ne
+  // sopprime la stima e il saldo usa il suo importo. La migrazione fa lo stesso
+  // in modo permanente; questo vale per i dati non ancora migrati.
+  const legacyCodeOf = p => window.LEGACY_CODES[p.slot.split("/").slice(0, 2).join("/")];
+  const sameDeadline = (f, p) => p.date === f.date
+    && (String(f.code) === p.code || String(f.code) === legacyCodeOf(p));
+  const firstPass = schedule(recorded);
+  const claimed = new Set(recorded.filter(f => f.slot).map(f => f.slot));
+  const slotted = recorded.map(f => {
+    if (f.slot || !isFact(f)) return f;
+    const match = firstPass.proposals.find(p => !claimed.has(p.slot) && sameDeadline(f, p));
+    if (!match) return f;
+    claimed.add(match.slot);
+    // Lo slot decide il tributo, come nella migrazione.
+    return { ...f, slot: match.slot, tributo: match.tributo };
+  });
+  const sched = schedule(slotted);
 
-  if (tipo === "professionista") {
-    generatedF24.push({ id: "_cassa_acc1", date: `${y}-06-30`, code: "3801", desc: `1° acconto ${cassaLabel} ${yr} (${cassaAccontoPct}% ${basedOn}, 1ª rata)`, amount: rataCassa, status: statusOf(fiscal.cassaAcconto1Paid), _generated: true });
-    generatedF24.push({ id: "_cassa_acc2", date: `${y}-11-30`, code: "3801", desc: `2° acconto ${cassaLabel} ${yr} (${cassaAccontoPct}% ${basedOn}, 2ª rata)`, amount: rataCassa, status: statusOf(fiscal.cassaAcconto2Paid), _generated: true });
-    if (saldoCassa > 0) {
-      generatedF24.push({ id: "_cassa_saldo", date: `${y + 1}-06-30`, code: "3801", desc: `Saldo ${cassaLabel} ${yr}`, amount: saldoCassa, _generated: true });
-    }
-  } else if (tipo === "ditta_individuale") {
-    // INPS artigiani/commercianti: 4 rate fisse (min.) + 2 saldi variabili
-    const rataFissa = Math.round(contribFisso / 4 * 100) / 100;
-    generatedF24.push({ id: "_inps_f1", date: `${y}-05-16`, code: "0601", desc: `INPS 1ª rata fissa ${yr}`, amount: rataFissa, _generated: true });
-    generatedF24.push({ id: "_inps_f2", date: `${y}-08-20`, code: "0601", desc: `INPS 2ª rata fissa ${yr}`, amount: rataFissa, _generated: true });
-    generatedF24.push({ id: "_inps_f3", date: `${y}-11-16`, code: "0601", desc: `INPS 3ª rata fissa ${yr}`, amount: rataFissa, _generated: true });
-    generatedF24.push({ id: `_inps_f4`, date: `${y+1}-02-16`, code: "0601", desc: `INPS 4ª rata fissa ${yr}`, amount: rataFissa, _generated: true });
-    if (contribVar > 0) {
-      generatedF24.push({ id: "_inps_v1", date: `${y}-11-16`, code: "0601", desc: `INPS saldo variabile ${yr} (1ª)`, amount: Math.round(contribVar * 0.5 * 100) / 100, _generated: true });
-      generatedF24.push({ id: "_inps_v2", date: `${y+1}-02-16`, code: "0601", desc: `INPS saldo variabile ${yr} (2ª)`, amount: Math.round(contribVar * 0.5 * 100) / 100, _generated: true });
-    }
-    // IRAP: 30 giugno (saldo anno prec.) + acconti (giugno+novembre)
-    if (irap > 0) {
-      generatedF24.push({ id: "_irap_acc1", date: `${y}-06-30`, code: "3800", desc: `1° acconto IRAP ${yr} (40%)`, amount: Math.round(irap * 0.4 * 100) / 100, _generated: true });
-      generatedF24.push({ id: "_irap_acc2", date: `${y}-11-30`, code: "3800", desc: `2° acconto IRAP ${yr} (60%)`, amount: Math.round(irap * 0.6 * 100) / 100, _generated: true });
-    }
-  }
-
-  // A deadline is identified by WHEN it falls and WHICH tributo it pays, not by
-  // an internal id: generated ids are "_q1", recorded ones are "f1", so keying
-  // the merge on id could never match and every deadline was listed twice —
-  // once as an estimate and once as the real entry, with the totals adding both.
-  // What the user recorded wins; the estimate only fills a gap.
-  // A FACT beats a computation: an entry the user marked paid or scheduled is
-  // what happened, and the estimate for that deadline is dropped. A recorded
-  // row still marked "estimated" is not a fact, so the computed figure — which
-  // now comes from the real invoices — supersedes it. Otherwise a stale saved
-  // estimate of 0,00 would hide a liability the invoices clearly show.
-  const settledKeys = new Set(recorded.filter(f => f.status === 'paid' || f.status === 'scheduled').map(key));
-  const generated = generatedF24.filter(g => g.amount > 0 && !settledKeys.has(key(g)));
-  const generatedKeys = new Set(generated.map(key));
+  // Una riga registrata "stimata" non è un fatto: la stima calcolata dalle
+  // fatture, che è più fresca, prende il suo posto per la stessa scadenza.
+  const propSlots = new Set(sched.proposals.map(p => p.slot));
+  const shadowed = f => !isFact(f)
+    && ((f.slot && propSlots.has(f.slot)) || sched.proposals.some(p => sameDeadline(f, p)));
   const f24All = [
-    // An instalment of nothing is not a deadline. The IVA rows were already
-    // guarded this way; the IRPEF and cassa rows were not.
-    ...generated,
-    ...recorded.filter(f => !generatedKeys.has(key(f))),
+    ...sched.proposals,
+    ...slotted.filter(f => !shadowed(f)).map(f => ({ ...f, kind: window.kindOf(f, scheme) })),
   ].map(f => ({ ...f, status: f.status || "estimated" }))
-   .sort((a, b) => a.date.localeCompare(b.date));
+   .sort((a, b) => String(a.date).localeCompare(String(b.date)));
+
+  // Acconti e saldi per i pannelli, sommati sui tributi con quella base: con
+  // uno schema senza tributi su quella base valgono zero.
+  const sumOver = (map, base) => round2(tributiByBase(base).reduce((s, t) => s + (map[t.id] || 0), 0));
+  const accontiCassa = sumOver(sched.acconti, "contribCassa");
+  const saldoCassa = sumOver(sched.saldi, "contribCassa");
+  const accontiIrpef = sumOver(sched.acconti, "irpef");
+  const saldoIrpef = sumOver(sched.saldi, "irpef");
 
   const totaleAnnoBase = (ivaDebito - ivaCredito) + irpefNetta + contribCassa;
   const totaleAnno = totaleAnnoBase + irap;
@@ -380,9 +347,28 @@ function computeTaxes(activities, expenses, fiscal, year, clients, studio, invoi
     accontiIrpef,
     saldoCassa,
     saldoIrpef,
+    // Scadenzario
+    scheme, schemeSource, schemeWarning,
+    saldi: sched.saldi, acconti: sched.acconti, crediti: sched.crediti,
+    irpefSola: cur.irpefSola, addRegDovuta: cur.addRegDovuta, addComDovuta: cur.addComDovuta,
   };
 }
 window.computeTaxes = computeTaxes;
+
+// La migrazione dello scadenzario con i dati dell'app: le proposte a storico
+// vuoto riconoscono le righe vecchie, quelle con lo storico vero danno gli
+// importi delle spunte — cioè le rate che l'app mostrava. Chiamata da app.jsx
+// al caricamento; qui perché ha bisogno di computeTaxes.
+function migrateFiscalWithData({ fiscal, studio, activities, expenses, clients, invoices, now }) {
+  const at = (f, y) => computeTaxes(activities || [], expenses || [], f, String(y), clients || [], studio, invoices || [])
+    .f24All.filter(x => x._generated);
+  return window.migrateFiscal({
+    fiscal, studio, now,
+    proposalsFor: y => at({ ...fiscal, f24History: [] }, y),
+    amountsFor: y => at(fiscal, y),
+  });
+}
+window.migrateFiscalWithData = migrateFiscalWithData;
 
 const Taxes = ({ activities, expenses, fiscal, clients, studio, invoices, year: taxYear, onUpdateFiscal }) => {
   const [tab, setTab] = useState("overview");
@@ -394,13 +380,46 @@ const Taxes = ({ activities, expenses, fiscal, clients, studio, invoices, year: 
   const f24All = tax.f24All || [];
   const f24Paid = f24All.filter(f => f.status === "paid");
   const f24Upcoming = f24All.filter(f => f.status !== "paid").sort((a, b) => a.date.localeCompare(b.date));
-  const totalPaid = f24Paid.reduce((s, f) => s + f.amount, 0);
-  const totalUpcoming = f24Upcoming.reduce((s, f) => s + f.amount, 0);
+  const totalPaid = f24Paid.reduce((s, f) => s + window.amountOf(f.amount), 0);
+  const totalUpcoming = f24Upcoming.reduce((s, f) => s + window.amountOf(f.amount), 0);
   const nextDeadline = f24Upcoming[0];
   const daysToNext = nextDeadline ? Math.ceil((new Date(nextDeadline.date) - today) / 86400000) : null;
 
+  // Segnare versata una scadenza è registrare la riga, con il suo slot: la riga
+  // è l'unica fonte dei versamenti. Toglierla è cancellare quella riga, come la
+  // ✕ del calendario. Una sola funzione per tutti i pannelli.
+  const markPaid = onUpdateFiscal ? (row) => {
+    if (!row) return;
+    const anno = row.slot ? Number(String(row.slot).split("/")[2]) : row.anno;
+    // Un errore qui non deve restare nella console: il pulsante sembrerebbe
+    // semplicemente non fare niente.
+    try {
+      onUpdateFiscal({
+        ...fiscal,
+        f24History: window.upsertF24Entry(fiscal.f24History || [], {
+          ...row, anno, status: "paid", paidDate: new Date().toISOString().slice(0, 10),
+        }),
+      });
+    } catch (e) {
+      const msg = "Versamento non registrato: " + String(e.message || e).replace(/^f24: /, "");
+      if (window.showToast) window.showToast(msg, "error"); else window.alert(msg);
+    }
+  } : null;
+  const unmarkPaid = onUpdateFiscal ? (row) => {
+    if (!row || row._generated) return;
+    if (!window.confirm("Togliere il versamento registrato per questa scadenza?")) return;
+    onUpdateFiscal({ ...fiscal, f24History: window.removeF24Entry(fiscal.f24History || [], row.id) });
+  } : null;
+
   return (
     <div className="content">
+      {/* Uno scadenzario salvato che non regge più ricade sul preset: chi guarda
+          le scadenze deve saperlo, non solo chi apre Impostazioni. */}
+      {tax.schemeWarning && (
+        <div style={{ padding: "10px 12px", marginBottom: 12, background: "oklch(0.97 0.05 80)", borderRadius: 4, fontSize: 12.5 }}>
+          {tax.schemeWarning}
+        </div>
+      )}
       {/* Hero KPIs */}
       <div className="kpi-grid" style={{ gridTemplateColumns: "repeat(5, 1fr)" }}>
         <div className="kpi" style={{ borderLeft: "3px solid var(--accent)" }}>
@@ -460,19 +479,19 @@ const Taxes = ({ activities, expenses, fiscal, clients, studio, invoices, year: 
         <TaxOverview tax={tax} fiscal={fiscal} f24Upcoming={f24Upcoming} fiscalYear={fiscalYear} studio={studio} />
       )}
       {tab === "iva" && (
-        <TaxIVA tax={tax} fiscal={fiscal} fiscalYear={fiscalYear} />
+        <TaxIVA tax={tax} fiscal={fiscal} fiscalYear={fiscalYear} onMark={markPaid} onUnmark={unmarkPaid} />
       )}
       {tab === "irpef" && (
-        <TaxIRPEF tax={tax} fiscal={fiscal} />
+        <TaxIRPEF tax={tax} fiscal={fiscal} fiscalYear={fiscalYear} onMark={markPaid} onUnmark={unmarkPaid} />
       )}
       {tab === "cassa" && (
-        <TaxCassa tax={tax} fiscal={fiscal} studio={studio} onUpdateFiscal={onUpdateFiscal} />
+        <TaxCassa tax={tax} fiscal={fiscal} studio={studio} fiscalYear={fiscalYear} onMark={markPaid} onUnmark={unmarkPaid} />
       )}
       {tab === "irap" && tax.tipo === "ditta_individuale" && (
-        <TaxIRAP tax={tax} fiscal={fiscal} fiscalYear={fiscalYear} onUpdateFiscal={onUpdateFiscal} />
+        <TaxIRAP tax={tax} fiscal={fiscal} fiscalYear={fiscalYear} onMark={markPaid} onUnmark={unmarkPaid} />
       )}
       {tab === "f24" && (
-        <TaxF24 fiscal={fiscal} tax={tax} fiscalYear={fiscalYear} onUpdateFiscal={onUpdateFiscal} />
+        <TaxF24 fiscal={fiscal} tax={tax} fiscalYear={fiscalYear} onUpdateFiscal={onUpdateFiscal} onMark={markPaid} onUnmark={unmarkPaid} />
       )}
       {tab === "assets" && (
         <div className="card">
@@ -650,7 +669,15 @@ const TaxWaterfall = ({ tax, studio }) => {
 };
 
 // ===== IVA =====
-const TaxIVA = ({ tax, fiscal, fiscalYear }) => (
+// L'acconto di dicembre che grava su un periodo IVA (0 se nessuno): quel
+// periodo si versa al netto, come nel calendario.
+const accontoIvaSu = (tax, q) => {
+  const iva = ((tax.scheme && tax.scheme.tributi) || []).find(t => t.kind === "iva");
+  return iva && iva.acconto && iva.acconto.periodo === q.id.toLowerCase()
+    ? window.amountOf(tax.acconti && tax.acconti[iva.id]) : 0;
+};
+
+const TaxIVA = ({ tax, fiscal, fiscalYear, onMark, onUnmark }) => (
   <div className="card">
     <div className="card-header">
       <div>
@@ -680,11 +707,24 @@ const TaxIVA = ({ tax, fiscal, fiscalYear }) => (
             <td className="num mono" style={{ color: "var(--text-muted)" }} title={t('tax.reverseNeutral')}>
               {fmtEUR(q.reverse)}
             </td>
-            <td className="num mono"><strong>{fmtEUR(Math.max(0, q.balance))}</strong></td>
+            {/* Il periodo su cui grava l'acconto di dicembre si versa al netto: lo
+                stesso importo del calendario, non la liquidazione lorda. */}
+            {(() => {
+              const acc = accontoIvaSu(tax, q);
+              return (
+                <td className="num mono">
+                  <strong>{fmtEUR(Math.max(0, q.balance - acc))}</strong>
+                  {acc > 0 && <div style={{ fontSize: 10.5, color: "var(--text-muted)" }}>al netto dell'acconto di {fmtEUR(acc)}</div>}
+                </td>
+              );
+            })()}
             <td>
-              {q.paid
-                ? <span className="badge badge-success badge-dot">Versato {q.paidAmount ? fmtEUR(q.paidAmount) : ""}</span>
-                : q.balance > 0
+              {(() => {
+                const r = (tax.f24All || []).find(f => f.slot === `iva/${q.id.toLowerCase()}/${fiscalYear}`);
+                return r && r.status === "paid";
+              })()
+                ? <span className="badge badge-success badge-dot">Versato {fmtEUR((tax.f24All || []).find(f => f.slot === `iva/${q.id.toLowerCase()}/${fiscalYear}`).amount)}</span>
+                : q.balance - accontoIvaSu(tax, q) > 0
                   ? <span className="badge badge-warning badge-dot">Da liquidare</span>
                   : <span className="badge">A credito (compensa)</span>}
             </td>
@@ -704,8 +744,13 @@ const TaxIVA = ({ tax, fiscal, fiscalYear }) => (
     </table>
     <div className="card-body" style={{ borderTop: "1px solid var(--border)" }}>
       <div style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.6 }}>
-        <strong style={{ color: "var(--text)" }}>Codice tributo F24:</strong> 6031 (IVA trimestrale) — maggiorazione 1% per i contribuenti trimestrali (già inclusa nel saldo).
+        <strong style={{ color: "var(--text)" }}>Codici tributo F24:</strong> 6031, 6032, 6033 per i primi tre trimestri, 6099 per il
+        saldo annuale di marzo (che comprende il quarto), 6035 per l'acconto del 27 dicembre — maggiorazione 1% per i
+        trimestrali (già inclusa). Il quarto trimestre si paga al netto dell'acconto.
       </div>
+    </div>
+    <div className="card-body" style={{ borderTop: "1px solid var(--border)" }}>
+      <SchemeRows tax={tax} bases={["ivaPeriodo"]} fiscalYear={fiscalYear} onMark={onMark} onUnmark={onUnmark} />
     </div>
   </div>
 );
@@ -724,6 +769,51 @@ const RateFromSettings = ({ label, value }) => (
     <span style={{ fontSize: 11, color: "var(--text-muted)" }}>Impostazioni → Fiscalità</span>
   </div>
 );
+
+// Le scadenze dello schema per i tributi con una certa base, con lo stato preso
+// dalla riga registrata (per slot). Sostituisce le righe fisse 40/60 e le due
+// metà dei contributi: con lo schema le rate sono quante e come le dichiari.
+const SchemeRows = ({ tax, bases, fiscalYear, onMark, onUnmark }) => {
+  const tributi = ((tax.scheme && tax.scheme.tributi) || []).filter(t => bases.includes(t.base));
+  if (!tributi.length) return null;
+  const year = String(fiscalYear);
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      {tributi.map(t => {
+        const rows = (tax.f24All || [])
+          .filter(f => f.tributo === t.id && f.slot && String(f.slot).endsWith("/" + year))
+          .sort((a, b) => String(a.date).localeCompare(String(b.date)));
+        const nessunAcconto = t.kind !== "iva" && (!t.acconti || t.acconti.metodo !== "storico");
+        const credito = tax.crediti && tax.crediti[t.id];
+        return (
+          <div key={t.id}>
+            <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>{t.label}</div>
+            {nessunAcconto && !(t.righe || []).some(r => r.quota === "corrente") && (
+              <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 6 }}>
+                Nessun acconto previsto: l'imposta dell'anno si versa tutta a saldo.
+              </div>
+            )}
+            {rows.map(f => (
+              <div key={f.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12.5, marginBottom: 6, gap: 8 }}>
+                <span>
+                  {f.desc} · entro {new Date(f.date).toLocaleDateString("it-IT", { day: "2-digit", month: "short", year: "numeric" })}
+                  {" · "}<span className="mono">{f.code || "codice da indicare"}</span>
+                  {" · "}<span className="mono">{fmtEUR(f.amount)}</span>
+                </span>
+                {onMark && (f.status === "paid"
+                  ? <button className="btn btn-sm btn-primary" onClick={() => onUnmark(f)}>✓ Versato</button>
+                  : <button className="btn btn-sm" onClick={() => onMark(f)}>Da versare</button>)}
+              </div>
+            ))}
+            {credito > 0 && (
+              <div style={{ fontSize: 12.5, color: "var(--success)" }}>Credito {fmtEUR(credito)}: gli acconti superano il dovuto.</div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+};
 
 const AccontoDelta = ({ dovuto, acconti, delta }) => (
   <div style={{ marginTop: 10, paddingTop: 8, borderTop: "1px dashed var(--border)", fontSize: 12 }}>
@@ -780,7 +870,7 @@ const IrpefBase = ({ tax }) => {
   );
 };
 
-const TaxIRPEF = ({ tax, fiscal }) => (
+const TaxIRPEF = ({ tax, fiscal, fiscalYear, onMark, onUnmark }) => (
   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
     <div className="card">
       <div className="card-header"><h3>Calcolo IRPEF a scaglioni</h3></div>
@@ -848,20 +938,20 @@ const TaxIRPEF = ({ tax, fiscal }) => (
 
           <div style={{ padding: 14, border: "1px solid var(--border)", borderRadius: 4 }}>
             <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>
-              Acconti IRPEF — metodo storico su {tax.prevYr}
-              {tax.prevYear.derived
-                ? <span className="badge badge-success" style={{ marginLeft: 6 }}>da fatture {tax.prevYr}</span>
-                : <span className="badge" style={{ marginLeft: 6 }}>stima inserita a mano</span>}
+              {/* Il titolo segue lo schema: con "nessun acconto" non c'è un metodo
+                  storico né una base dell'anno prima da dichiarare. */}
+              {((tax.scheme && tax.scheme.tributi) || []).some(t => t.base === "irpef" && t.acconti && t.acconti.metodo === "storico")
+                ? <React.Fragment>
+                    Acconti IRPEF — metodo storico su {tax.prevYr}
+                    {tax.prevYear.derived
+                      ? <span className="badge badge-success" style={{ marginLeft: 6 }}>da fatture {tax.prevYr}</span>
+                      : <span className="badge" style={{ marginLeft: 6 }}>stima inserita a mano</span>}
+                  </React.Fragment>
+                : "IRPEF e addizionali — scadenze dallo scadenzario"}
             </div>
-            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, marginBottom: 6 }}>
-              <span>1° acconto (40%) · entro 30 giu · {fmtEUR(tax.accontiIrpef * 0.4)}</span>
-              <span>{fiscal.irpefAcconto1Paid ? <span className="badge badge-success badge-dot">versato</span> : <span className="badge badge-warning">da pagare</span>}</span>
-            </div>
-            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5 }}>
-              <span>2° acconto (60%) · entro 30 nov · {fmtEUR(tax.accontiIrpef * 0.6)}</span>
-              <span>{fiscal.irpefAcconto2Paid ? <span className="badge badge-success badge-dot">versato</span> : <span className="badge badge-warning">da pagare</span>}</span>
-            </div>
-            <AccontoDelta dovuto={tax.irpefNetta} acconti={tax.accontiIrpef} delta={tax.saldoIrpef} />
+            <SchemeRows tax={tax} bases={["irpef", "addReg", "addCom"]} fiscalYear={fiscalYear} onMark={onMark} onUnmark={onUnmark} />
+            {/* Il saldo IRPEF chiude la sola IRPEF: le addizionali hanno saldi e codici propri. */}
+            <AccontoDelta dovuto={tax.irpefSola} acconti={tax.accontiIrpef} delta={tax.saldoIrpef} />
           </div>
 
           <div style={{ padding: 14, background: "oklch(0.97 0.04 145)", border: "1px solid oklch(0.85 0.10 145)", borderRadius: 4, fontSize: 12.5 }}>
@@ -909,7 +999,7 @@ const TaxIRPEF = ({ tax, fiscal }) => (
 );
 
 // ===== Cassa =====
-const TaxCassa = ({ tax, fiscal, studio, onUpdateFiscal }) => {
+const TaxCassa = ({ tax, fiscal, studio, fiscalYear, onMark, onUnmark }) => {
   const cassaName = studio?.cassaName || "Cassa previdenziale";
   // Default aliquote per cassa
   const cassaDefaults = {
@@ -923,7 +1013,6 @@ const TaxCassa = ({ tax, fiscal, studio, onUpdateFiscal }) => {
   const def = cassaDefaults[cassaName] || { sogg: 14.5, integ: 4, note: "" };
   const integPct = def.integ;
 
-  const updateFiscal = (patch) => onUpdateFiscal && onUpdateFiscal({ ...fiscal, ...patch });
 
   return (
   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
@@ -968,21 +1057,10 @@ const TaxCassa = ({ tax, fiscal, studio, onUpdateFiscal }) => {
                 ? <span className="badge badge-success" style={{ marginLeft: 6 }}>da fatture {tax.prevYr}</span>
                 : <span className="badge" style={{ marginLeft: 6 }}>stima inserita a mano</span>}
             </div>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12.5, marginBottom: 6 }}>
-              <span>1ª rata · 30 giu · {fmtEUR(tax.accontiCassa / 2)}</span>
-              <button className={"btn btn-sm " + (fiscal.cassaAcconto1Paid ? "btn-primary" : "")}
-                onClick={() => updateFiscal({ cassaAcconto1Paid: !fiscal.cassaAcconto1Paid })}>
-                {fiscal.cassaAcconto1Paid ? "✓ Versato" : "Da versare"}
-              </button>
-            </div>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12.5 }}>
-              <span>2ª rata · 30 nov · {fmtEUR(tax.accontiCassa / 2)}</span>
-              <button className={"btn btn-sm " + (fiscal.cassaAcconto2Paid ? "btn-primary" : "")}
-                onClick={() => updateFiscal({ cassaAcconto2Paid: !fiscal.cassaAcconto2Paid })}>
-                {fiscal.cassaAcconto2Paid ? "✓ Versato" : "Da versare"}
-              </button>
-            </div>
-            <AccontoDelta dovuto={tax.contribCassa} acconti={tax.accontiCassa} delta={tax.saldoCassa} />
+            <SchemeRows tax={tax} bases={["contribCassa", "contribFisso", "contribVar"]} fiscalYear={fiscalYear} onMark={onMark} onUnmark={onUnmark} />
+            {tax.tipo === "professionista" && (
+              <AccontoDelta dovuto={tax.contribCassa} acconti={tax.accontiCassa} delta={tax.saldoCassa} />
+            )}
           </div>
         </div>
       </div>
@@ -1022,7 +1100,7 @@ const TaxCassa = ({ tax, fiscal, studio, onUpdateFiscal }) => {
 };
 
 // ===== IRAP (solo ditta individuale) =====
-const TaxIRAP = ({ tax, fiscal, fiscalYear, onUpdateFiscal }) => (
+const TaxIRAP = ({ tax, fiscal, fiscalYear, onMark, onUnmark }) => (
   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
     <div className="card">
       <div className="card-header">
@@ -1062,16 +1140,7 @@ const TaxIRAP = ({ tax, fiscal, fiscalYear, onUpdateFiscal }) => (
       <div className="card-header"><h3>Scadenze IRAP {fiscalYear}</h3></div>
       <div className="card-body">
         <div style={{ display: "flex", flexDirection: "column", gap: 10, fontSize: 12.5 }}>
-          <div style={{ padding: "10px 12px", background: "var(--bg-sunken)", borderRadius: 4 }}>
-            <div style={{ fontWeight: 600, marginBottom: 4 }}>Saldo {parseInt(fiscalYear)-1} + 1° acconto {fiscalYear}</div>
-            <div style={{ color: "var(--text-secondary)" }}>Entro il 30 giugno · cod. tributo 3800</div>
-            <div className="mono" style={{ marginTop: 4, fontWeight: 600 }}>{fmtEUR(tax.irap * 0.4)}</div>
-          </div>
-          <div style={{ padding: "10px 12px", background: "var(--bg-sunken)", borderRadius: 4 }}>
-            <div style={{ fontWeight: 600, marginBottom: 4 }}>2° acconto {fiscalYear}</div>
-            <div style={{ color: "var(--text-secondary)" }}>Entro il 30 novembre · cod. tributo 3800</div>
-            <div className="mono" style={{ marginTop: 4, fontWeight: 600 }}>{fmtEUR(tax.irap * 0.6)}</div>
-          </div>
+          <SchemeRows tax={tax} bases={["irap"]} fiscalYear={fiscalYear} onMark={onMark} onUnmark={onUnmark} />
           <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 8 }}>Codice regione: dipende dalla regione di domicilio fiscale.</div>
         </div>
       </div>
@@ -1080,7 +1149,7 @@ const TaxIRAP = ({ tax, fiscal, fiscalYear, onUpdateFiscal }) => (
 );
 
 // ===== F24 calendar =====
-const TaxF24 = ({ fiscal, tax, fiscalYear, onUpdateFiscal }) => {
+const TaxF24 = ({ fiscal, tax, fiscalYear, onUpdateFiscal, onMark }) => {
   const months = ["Gen", "Feb", "Mar", "Apr", "Mag", "Giu", "Lug", "Ago", "Set", "Ott", "Nov", "Dic"];
   const currentRealMonth = new Date().getMonth();
   const allF24 = tax.f24All || [];
@@ -1091,34 +1160,46 @@ const TaxF24 = ({ fiscal, tax, fiscalYear, onUpdateFiscal }) => {
     byMonth[m].push(f);
   });
 
-  const markPaid = (id) => {
-    if (!onUpdateFiscal) return;
-    const now = new Date().toISOString().slice(0, 10);
-    // If it's a generated entry (_generated), move it into fiscal.f24History as confirmed paid
-    const existing = allF24.find(f => f.id === id);
-    if (!existing) return;
-    // Passa da upsertF24Entry come ogni altra scrittura: normalizza l'id (una
-    // voce calcolata ne porta uno che comincia con "_") e toglie _generated.
-    onUpdateFiscal({
-      ...fiscal,
-      f24History: window.upsertF24Entry(fiscal.f24History || [], { ...existing, status: "paid", paidDate: now }),
-    });
-  };
+  const markPaid = (id) => onMark && onMark(allF24.find(f => f.id === id));
 
   // ── Voci registrate a mano ───────────────────────────────────────────────
   // Senza questo l'unico gesto possibile era spuntare "Versato" su una riga
   // già presente, con l'importo che aveva: un versamento vero che il calcolo
   // non prevede — una rata INPS quando la base dell'anno prima è vuota — non
   // aveva modo di entrare, e restava fuori dalla deduzione per cassa.
-  const emptyDraft = { id: null, date: `${fiscalYear}-06-30`, code: "3801", desc: "", amount: "", status: "paid" };
+  const scheme = tax.scheme || { tributi: [] };
+  const defaultTributo = (scheme.tributi.find(t => t.kind === "contributo") || scheme.tributi[0] || {}).id || null;
+  const emptyDraft = {
+    id: null, date: `${fiscalYear}-06-30`, code: "", desc: "", amount: "", status: "paid",
+    tributo: defaultTributo, slot: "", anno: Number(fiscalYear),
+  };
   const [draft, setDraft] = useState(emptyDraft);
+  // Le scadenze del tributo scelto, di quest'anno e dell'anno prima: un saldo si
+  // versa l'anno dopo, e "Saldo IRPEF 2025" pagato a giugno è dell'anno prima.
+  const slotOptions = draft.tributo
+    ? [...window.schemeSlots(scheme, draft.tributo, Number(fiscalYear) - 1),
+       ...window.schemeSlots(scheme, draft.tributo, Number(fiscalYear))]
+    : [];
+  const pickSlot = (value) => {
+    const opt = slotOptions.find(o => o.slot === value);
+    if (!opt) { setDraft({ ...draft, slot: "", anno: Number(String(draft.date).slice(0, 4)) || Number(fiscalYear) }); return; }
+    const t = scheme.tributi.find(x => x.id === draft.tributo) || {};
+    const rid = opt.slot.split("/")[1];
+    const r = (t.righe || t.periodi || []).find(x => x.id === rid) || (rid === "acconto" ? t.acconto : null) || {};
+    setDraft({
+      ...draft, slot: opt.slot, anno: Number(opt.slot.split("/")[2]), date: opt.date,
+      code: draft.code || String(r.code || ""), desc: draft.desc || opt.label,
+    });
+  };
   const [draftError, setDraftError] = useState("");
   const isManual = f => !f._generated && (fiscal.f24History || []).some(h => h.id === f.id);
 
   const saveDraft = () => {
     if (!onUpdateFiscal) return;
     try {
-      const next = window.upsertF24Entry(fiscal.f24History || [], draft);
+      const next = window.upsertF24Entry(fiscal.f24History || [], {
+        ...draft, slot: draft.slot || null, tributo: draft.tributo || null,
+      });
       onUpdateFiscal({ ...fiscal, f24History: next });
       setDraft(emptyDraft);
       setDraftError("");
@@ -1129,7 +1210,11 @@ const TaxF24 = ({ fiscal, tax, fiscalYear, onUpdateFiscal }) => {
 
   const editEntry = (f) => {
     setDraftError("");
-    setDraft({ id: f.id, date: f.date, code: f.code, desc: f.desc || "", amount: f.amount, status: f.status });
+    setDraft({
+      id: f.id, date: f.date, code: f.code, desc: f.desc || "", amount: f.amount, status: f.status,
+      tributo: f.tributo || null, slot: f.slot || "",
+      anno: f.anno != null ? f.anno : Number(String(f.date).slice(0, 4)),
+    });
   };
 
   const deleteEntry = (id) => {
@@ -1189,26 +1274,69 @@ const TaxF24 = ({ fiscal, tax, fiscalYear, onUpdateFiscal }) => {
               {draft.id ? "Modifica la voce" : "Registra un versamento o una scadenza"}
             </div>
             <div className="hint" style={{ marginBottom: 10 }}>
-              Solo le voci marcate <strong>Versato</strong> con codice 3801 o 0601 si deducono dal
-              reddito, e nell'anno della data che indichi qui.
+              Solo le voci <strong>Versato</strong> di un tributo contributivo si deducono dal
+              reddito, nell'anno della data che indichi qui. La scadenza collega la voce allo
+              scadenzario: un acconto registrato sostituisce la stima e conta nel saldo.
             </div>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end" }}>
               <label style={{ display: "grid", gap: 4, fontSize: 12 }}>Data
                 <input className="input mono" type="date" style={{ width: 150 }}
                   value={draft.date} onChange={e => setDraft({ ...draft, date: e.target.value })} />
               </label>
-              <label style={{ display: "grid", gap: 4, fontSize: 12 }}>Codice tributo
-                <input className="input mono" list="f24-codici" style={{ width: 110 }} placeholder="3801"
-                  value={draft.code} onChange={e => setDraft({ ...draft, code: e.target.value })} />
+              <label style={{ display: "grid", gap: 4, fontSize: 12 }}>Tributo
+                <select className="select" style={{ width: 190 }}
+                  value={draft.tributo || ""}
+                  onChange={e => setDraft({ ...draft, tributo: e.target.value || null, slot: "" })}>
+                  {scheme.tributi.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
+                  <option value="">— da indicare —</option>
+                </select>
               </label>
+              <label style={{ display: "grid", gap: 4, fontSize: 12 }}>Scadenza
+                <select className="select" style={{ width: 240 }}
+                  value={draft.slot || ""} onChange={e => pickSlot(e.target.value)}>
+                  <option value="">Fuori programma</option>
+                  {slotOptions.map(o => (
+                    <option key={o.slot} value={o.slot}>{o.label} · {new Date(o.date).toLocaleDateString("it-IT")}</option>
+                  ))}
+                </select>
+              </label>
+              {!draft.slot && (
+                <label style={{ display: "grid", gap: 4, fontSize: 12 }}>Anno di competenza
+                  <input className="input mono" style={{ width: 90 }} inputMode="numeric"
+                    value={draft.anno == null ? "" : draft.anno}
+                    onChange={e => setDraft({ ...draft, anno: e.target.value })} />
+                </label>
+              )}
+              <label style={{ display: "grid", gap: 4, fontSize: 12 }}>Codice tributo
+                <input className="input mono" list="f24-codici" style={{ width: 110 }} placeholder="PXX"
+                  value={draft.code}
+                  onChange={e => {
+                    const code = e.target.value;
+                    setDraft({ ...draft, code, tributo: window.inferTributo(code, scheme) || draft.tributo });
+                  }} />
+              </label>
+              {/* Codici dell'Appendice A della spec dello scadenzario. */}
               <datalist id="f24-codici">
-                <option value="3801">Contributi cassa / Gestione Separata</option>
-                <option value="0601">Contributi INPS artigiani e commercianti</option>
                 <option value="4001">Saldo IRPEF</option>
                 <option value="4033">1° acconto IRPEF</option>
                 <option value="4034">2° acconto IRPEF</option>
-                <option value="6031">IVA trimestrale</option>
-                <option value="3800">IRAP</option>
+                <option value="3801">Saldo addizionale regionale</option>
+                <option value="3843">Acconto addizionale comunale</option>
+                <option value="3844">Saldo addizionale comunale</option>
+                <option value="PXX">Gestione Separata INPS (solo GS)</option>
+                <option value="P10">Gestione Separata INPS (con altra copertura)</option>
+                <option value="AF">INPS artigiani, minimale</option>
+                <option value="AP">INPS artigiani, eccedente</option>
+                <option value="CF">INPS commercianti, minimale</option>
+                <option value="CP">INPS commercianti, eccedente</option>
+                <option value="6031">IVA 1° trimestre</option>
+                <option value="6032">IVA 2° trimestre</option>
+                <option value="6033">IVA 3° trimestre</option>
+                <option value="6099">IVA saldo annuale</option>
+                <option value="6035">Acconto IVA (trimestrali)</option>
+                <option value="3812">1° acconto IRAP</option>
+                <option value="3813">2° acconto IRAP</option>
+                <option value="3800">Saldo IRAP</option>
               </datalist>
               <label style={{ display: "grid", gap: 4, fontSize: 12, flex: "1 1 220px" }}>Descrizione
                 <input className="input" placeholder="1° acconto contributi 2026"
@@ -1257,7 +1385,13 @@ const TaxF24 = ({ fiscal, tax, fiscalYear, onUpdateFiscal }) => {
               <tr key={f.id}>
                 <td className="mono">{new Date(f.date).toLocaleDateString("it-IT")}</td>
                 <td className="mono"><strong>{f.code}</strong></td>
-                <td>{f.desc}</td>
+                <td>
+                  {f.desc}
+                  {!f._generated && f.kind === null && (
+                    <span className="badge badge-warning" style={{ marginLeft: 6 }}
+                      title="Senza tributo la voce non entra nei calcoli: modificala e scegli il tributo">tributo da indicare</span>
+                  )}
+                </td>
                 <td className="num mono"><strong>{f.amount > 0 ? fmtEUR(f.amount) : <span style={{ color: "var(--text-muted)" }}>stimato</span>}</strong></td>
                 <td>
                   {f.status === "paid" && <span className="badge badge-success badge-dot">Versato</span>}

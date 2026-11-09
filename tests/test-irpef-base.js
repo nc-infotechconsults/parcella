@@ -80,9 +80,11 @@ test('solo i tributi contributivi riducono la base: IVA e IRPEF no', () => {
   near(t.redditoImpIrpef, 100000);
 });
 
-test('il flag Versato conta la rata anche senza una riga F24', () => {
-  const t = run({ cassaPrevYear: 10000, cassaAcconto1Paid: true });
-  near(t.accontiCassa, 8000);            // 80% di 10.000
+// Le spunte "Versato" sono diventate righe registrate con lo slot della rata.
+test('una rata segnata versata deduce il suo importo', () => {
+  const rata = { id: 'r1', slot: 'contributi/acc1/2026', tributo: 'contributi', date: '2026-06-30', code: 'PXX', desc: 'x', amount: 4000, status: 'paid' };
+  const t = run({ cassaPrevYear: 10000, f24History: [rata] });
+  near(t.accontiCassa, 8000);            // 80% di 10.000: la rata versata vale quanto la proposta
   near(t.contributiVersati, 4000);       // una sola delle due rate
   near(t.redditoImpIrpef, 96000);
 });
@@ -104,4 +106,22 @@ test('la base non va sotto zero', () => {
   const t = run({ f24History: [f24('2026-06-30', '3801', 500000)] });
   assert.equal(t.redditoImpIrpef, 0);
   assert.equal(t.irpefLordaTot, 0);
+});
+
+// Decide il tributo della riga, non il codice: il 3801 che l'app usava per i
+// contributi è il codice dell'addizionale regionale, e una vera addizionale
+// registrata con 3801 veniva dedotta come contributo.
+test('solo le righe di tributo contributivo deducono', () => {
+  near(run({ f24History: [{ ...f24('2026-03-01', 'PXX', 5000), tributo: 'contributi' }] }).contributiVersati, 5000);
+  near(run({ f24History: [{ ...f24('2026-03-01', '3801', 5000), tributo: 'irpef' }] }).contributiVersati, 0);
+});
+
+test('una riga il cui tributo non è più nello schema non deduce', () => {
+  // Review Focus 5.
+  const scheme = r.presetScheme('professionista-gs', {});
+  scheme.tributi = scheme.tributi.filter(t => t.id !== 'contributi');
+  const row = { ...f24('2026-03-01', 'PXX', 5000), tributo: 'contributi' };
+  const tax = run({ scadenzario: scheme, f24History: [row] });
+  near(tax.contributiVersati, 0);
+  assert.equal(tax.f24All.find(f => f.id === row.id).kind, null);
 });

@@ -167,19 +167,10 @@ window.APP_DATA = {
     inpsPctVariabile: 24.0,         // % su reddito eccedente il minimale (artigiani)
     irapPct: 3.9,                   // aliquota IRAP base (solo ditta/società con autonoma org.)
     ivaLiquidazione: "trimestrale", // "trimestrale" | "mensile"
-    // Acconti già versati (es: dichiarazione anno precedente)
+    // Base degli acconti finché l'archivio non ha le fatture dell'anno prima.
+    // I versamenti non sono spunte: sono le righe di f24History qui sotto.
     irpefPrevYear: 28400,
-    irpefAcconto1Paid: true,
-    irpefAcconto2Paid: false,
     cassaPrevYear: 6800,
-    cassaAcconto1Paid: true,
-    cassaAcconto2Paid: false,
-    // IVA — saldi trimestrali già liquidati
-    ivaQ1Paid: true,
-    ivaQ1Amount: 4280.00,
-    ivaQ2Paid: false,
-    ivaQ3Paid: false,
-    ivaQ4Paid: false,
     // Aliquote
     cassaContribPct: 14.5,
     irpefBrackets: [

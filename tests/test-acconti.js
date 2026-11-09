@@ -38,13 +38,18 @@ const base = { cassaContribPct: 26.07, irpefPrevYear: 28400, cassaPrevYear: 6800
 const run = (fiscal, invoices, studio) =>
   r.computeTaxes([], [], { ...base, ...fiscal }, '2026', [], studio || gestioneSeparata, invoices);
 const row = (rows, date, code) => rows.filter(f => f.date === date && f.code === code);
+// Lo scadenzario identifica ogni scadenza con uno slot (tributo/riga/anno): i
+// codici dei contributi non sono più il 3801 (che è l'addizionale regionale).
+const slot = (rows, s) => rows.filter(f => f.slot === s);
+const paidSlot = (s, amount) => ({ id: 'r_' + s, slot: s, tributo: s.split('/')[0], date: '2026-07-01', code: 'PXX', desc: 'x', amount, status: 'paid' });
 
 test('without prior-year data the acconto falls back to the stored figure', () => {
   const tax = run({}, [active()]);
   // Gestione Separata: 80% of last year's contributo, in two equal instalments.
   near(tax.accontiCassa, 6800 * 0.8);
-  const giu = row(tax.f24All, '2026-06-30', '3801');
+  const giu = slot(tax.f24All, 'contributi/acc1/2026');
   assert.equal(giu.length, 1);
+  assert.equal(giu[0].date, '2026-06-30');
   near(giu[0].amount, 6800 * 0.8 / 2);
 });
 
@@ -52,7 +57,7 @@ test('the June instalment is sized on last year, not on this year', () => {
   const tax = run({}, [active(), prevYear()]);
   assert.ok(tax.prevYear.contribCassa > 0, 'last year must be computed from its own documents');
   assert.notEqual(Math.round(tax.prevYear.contribCassa), Math.round(tax.contribCassa));
-  near(row(tax.f24All, '2026-06-30', '3801')[0].amount, tax.prevYear.contribCassa * 0.8 / 2);
+  near(slot(tax.f24All, 'contributi/acc1/2026')[0].amount, tax.prevYear.contribCassa * 0.8 / 2);
 });
 
 test('real documents for last year beat the stored estimate', () => {
@@ -64,7 +69,7 @@ test('real documents for last year beat the stored estimate', () => {
 test('the delta against the real year is settled the following June', () => {
   const tax = run({}, [active()]);
   near(tax.saldoCassa, tax.contribCassa - tax.accontiCassa);
-  const saldo = row(tax.f24All, '2027-06-30', '3801');
+  const saldo = slot(tax.f24All, 'contributi/saldo/2026');
   if (tax.saldoCassa > 0) {
     assert.equal(saldo.length, 1, 'a positive delta is a payment due next June');
     near(saldo[0].amount, tax.saldoCassa);
@@ -75,7 +80,7 @@ test('a year that went worse than the last leaves a credit, not a deadline', () 
   // One small invoice against a large stored prior year.
   const tax = run({ cassaPrevYear: 40000 }, [active({ totals: { imponibile: 1000, imposta: 220, documento: 1220 } })]);
   assert.ok(tax.saldoCassa < 0, 'overpaid instalments are a credit');
-  assert.equal(row(tax.f24All, '2027-06-30', '3801').length, 0);
+  assert.equal(slot(tax.f24All, 'contributi/saldo/2026').length, 0);
 });
 
 test('IRPEF instalments are 40/60 of last year, not of this year', () => {
@@ -88,14 +93,18 @@ test('IRPEF instalments are 40/60 of last year, not of this year', () => {
 test('a private cassa keeps the full prior-year contributo in two halves', () => {
   const tax = run({}, [active()], inarcassa);
   near(tax.accontiCassa, 6800);
-  near(row(tax.f24All, '2026-06-30', '3801')[0].amount, 3400);
+  near(slot(tax.f24All, 'contributi/acc1/2026')[0].amount, 3400);
 });
 
+// Le spunte "Versato" sono diventate righe registrate con lo slot della
+// scadenza (la migrazione le converte): è la riga che dice che è versata.
 test('an instalment the user marked versato is not shown as still due', () => {
-  const tax = run({ cassaAcconto1Paid: true, irpefAcconto1Paid: true }, [active()]);
-  assert.equal(row(tax.f24All, '2026-06-30', '3801')[0].status, 'paid');
-  assert.equal(row(tax.f24All, '2026-06-30', '4033')[0].status, 'paid');
-  assert.equal(row(tax.f24All, '2026-11-30', '4034')[0].status, 'estimated');
+  const tax = run({ f24History: [paidSlot('contributi/acc1/2026', 2720), paidSlot('irpef/acc1/2026', 11360)] }, [active()]);
+  const cassa = slot(tax.f24All, 'contributi/acc1/2026');
+  assert.equal(cassa.length, 1);
+  assert.equal(cassa[0].status, 'paid');
+  assert.equal(slot(tax.f24All, 'irpef/acc1/2026')[0].status, 'paid');
+  assert.equal(slot(tax.f24All, 'irpef/acc2/2026')[0].status, 'estimated');
 });
 
 test('an acconto the user recorded himself still wins over the computation', () => {
@@ -129,8 +138,12 @@ test('un anno precedente di soli costi non è una base: resta il valore memorizz
   near(tax.accontiIrpef, 28400);
 });
 
-test('senza ricavi l\'anno prima, spuntare Versato deduce comunque la rata', () => {
-  const tax = run({ cassaAcconto1Paid: true }, [active(), prevPassive()]);
+test('senza ricavi l\'anno prima la rata non vale zero, e una volta versata deduce', () => {
+  // Il difetto era una base zero derivata da un anno di soli costi: la rata
+  // proposta valeva zero e segnarla versata non deduceva niente.
+  const proposta = slot(run({}, [active(), prevPassive()]).f24All, 'contributi/acc2/2026')[0];
+  near(proposta.amount, 6800 * 0.8 / 2);
+  const tax = run({ f24History: [paidSlot('contributi/acc1/2026', 6800 * 0.8 / 2)] }, [active(), prevPassive()]);
   near(tax.contributiVersati, 6800 * 0.8 / 2);
 });
 
