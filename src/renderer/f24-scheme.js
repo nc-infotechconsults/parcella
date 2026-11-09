@@ -316,9 +316,100 @@
     'irap/acc1': '3800', 'irap/acc2': '3800',
   };
 
+  // ── Proposte e saldi ─────────────────────────────────────────────────────
+  // Un importo scritto prima che upsertF24Entry normalizzasse può essere una
+  // stringa, anche con la virgola decimale: deve valere come numero.
+  const amountOf = v => {
+    if (typeof v === 'number') return isFinite(v) ? v : 0;
+    const n = Number(String(v == null ? '' : v).trim().replace(',', '.'));
+    return isFinite(n) ? n : 0;
+  };
+  const isFact = f => f && (f.status === 'paid' || f.status === 'scheduled');
+  const slotParts = slot => {
+    const m = /^([^/]+)\/([^/]+)\/(\d{4})$/.exec(String(slot || ''));
+    return m ? { tributo: m[1], riga: m[2], anno: Number(m[3]) } : null;
+  };
+
+  function scheduleFromScheme(o) {
+    const scheme = o.scheme;
+    const year = Number(o.year);
+    const bases = o.bases || {};
+    const prevBases = o.prevBases || null;
+    const recorded = (o.recorded || []).filter(Boolean);
+    const suffix = o.basedOn ? ` (${o.basedOn})` : '';
+
+    const factBySlot = new Map();
+    recorded.filter(isFact).forEach(f => { if (f.slot) factBySlot.set(f.slot, f); });
+
+    const proposals = [];
+    const saldi = {}, acconti = {}, crediti = {};
+    const propose = (t, r, amount, desc) => {
+      const slot = `${t.id}/${r.id}/${year}`;
+      const value = round2(amount);
+      if (!(value > 0) || factBySlot.has(slot)) return;
+      proposals.push({
+        id: '_' + slot, slot, tributo: t.id, kind: t.kind, sezione: t.sezione || null,
+        date: fullDate(year, r), code: String(r.code == null ? '' : r.code), desc, amount: value, _generated: true,
+      });
+    };
+
+    for (const t of scheme.tributi || []) {
+      if (t.kind === 'iva') { scheduleIva(t, o, year, propose, factBySlot, saldi, acconti, crediti); continue; }
+
+      const righe = t.righe || [];
+      const base = amountOf(bases[t.base]);
+      const acc = t.acconti || { metodo: 'nessuno' };
+      const prevBase = prevBases ? amountOf(prevBases[t.base]) : amountOf(acc.fallbackPrevYear);
+      let baseAcconti = acc.metodo === 'storico' ? round2(prevBase * amountOf(acc.pct == null ? 100 : acc.pct) / 100) : 0;
+      if (baseAcconti < amountOf(acc.soglia)) baseAcconti = 0;
+
+      // Ogni acconto vale l'importo registrato se c'è un fatto per il suo slot,
+      // altrimenti la proposta.
+      let sommaAcconti = 0;
+      for (const r of righe) {
+        const desc = labelFor(r, year);
+        if (r.quota === 'acconto') {
+          const proposto = round2(baseAcconti * amountOf(r.share) / 100);
+          const fact = factBySlot.get(`${t.id}/${r.id}/${year}`);
+          sommaAcconti += fact ? amountOf(fact.amount) : proposto;
+          propose(t, r, proposto, desc + suffix);
+        } else if (r.quota === 'corrente') {
+          propose(t, r, base * amountOf(r.share) / 100, desc);
+        }
+      }
+
+      const saldoRow = righe.find(r => r.quota === 'saldo');
+      if (!saldoRow) continue;
+
+      // Versamenti dello stesso tributo e anno che lo schema non prevede: uno
+      // slot che lo schema non ha (più), o nessuno slot e l'anno dichiarato.
+      const rowIds = new Set(righe.map(r => r.id));
+      const extra = recorded.filter(isFact).filter(f => {
+        if (f.tributo !== t.id) return false;
+        const sp = slotParts(f.slot);
+        if (sp) return sp.tributo === t.id && sp.anno === year && !rowIds.has(sp.riga);
+        return !f.slot && Number(f.anno) === year;
+      }).reduce((sum, f) => sum + amountOf(f.amount), 0);
+
+      const totAcconti = round2(sommaAcconti + extra);
+      const delta = round2(base - totAcconti);
+      acconti[t.id] = totAcconti;
+      saldi[t.id] = delta;
+      if (delta < 0) crediti[t.id] = round2(-delta);
+      propose(t, saldoRow, delta, labelFor(saldoRow, year));
+    }
+
+    proposals.sort((a, b) => a.date.localeCompare(b.date));
+    return { proposals, saldi, acconti, crediti };
+  }
+
+  // IVA: Task 5.
+  function scheduleIva() {}
+
   return {
     SCHEME_BASES, SCHEME_KINDS, SCHEME_SEZIONI, LEGACY_CODES,
     validateScheme,
     presetIdFor, presetScheme, activeScheme, schemeSlots, inferTributo, kindOf,
+    scheduleFromScheme, amountOf,
   };
 });
