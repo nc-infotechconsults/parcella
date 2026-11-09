@@ -25,6 +25,7 @@ function loadRenderer() {
   };
   run('src/shared/categories.js');
   run('src/renderer/fiscal.js');
+  run('src/renderer/f24-scheme.js');
   sb.t = k => k; sb.fmtEUR = n => n; sb.fmtNum = n => n; sb.fmtH = n => n;
   sb.Icon = () => null; sb.Modal = () => null;
   run('src/renderer/components/shared.jsx', true);
